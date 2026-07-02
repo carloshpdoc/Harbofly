@@ -4,6 +4,11 @@ import ServiceManagement
 
 // MARK: - Config
 
+/// Nome de exibição do app. Trocar aqui reflete na UI inteira.
+enum AppInfo {
+    static let name = "Poof"
+}
+
 /// Apoio (tip jar) — troque pelos seus dados.
 enum Support {
     static let pixKey = "SUA_CHAVE_PIX@email.com"          // TODO: sua chave PIX
@@ -254,7 +259,7 @@ struct ContentView: View {
             Text("☕").font(.system(size: 44))
             Text(scanner.lastFreedBytes > 0 ? "Liberamos \(fmt(scanner.lastFreedBytes))!" : "Obrigado! 💙")
                 .font(.title3.bold())
-            Text("DiskWatch é grátis. Se te ajudou, me paga um café (R$2) pra apoiar o projeto 💙")
+            Text("\(AppInfo.name) é grátis. Se te ajudou, me paga um café (R$2) pra apoiar o projeto 💙")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -289,7 +294,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "internaldrive")
-                Text("DiskWatch").font(.headline)
+                Text(AppInfo.name).font(.headline)
                 Spacer()
                 if scanner.scanning { ProgressView().controlSize(.small) }
             }

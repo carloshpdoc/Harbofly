@@ -1,10 +1,11 @@
 #!/bin/bash
-# Monta DiskWatch.app a partir do binário SwiftPM (release).
+# Monta o .app a partir do binário SwiftPM (release).
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="DiskWatch.app"
-BIN=".build/release/DiskWatch"
+APP_NAME="Poof"                       # nome de exibição / bundle
+APP="${APP_NAME}.app"
+BIN=".build/release/DiskWatch"        # executável do SwiftPM target (interno)
 
 echo "==> Compilando (release)…"
 xcrun swift build -c release
@@ -14,14 +15,14 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/DiskWatch"
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>DiskWatch</string>
-    <key>CFBundleDisplayName</key><string>DiskWatch</string>
-    <key>CFBundleIdentifier</key><string>com.carloscarmo.diskwatch</string>
+    <key>CFBundleName</key><string>${APP_NAME}</string>
+    <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
+    <key>CFBundleIdentifier</key><string>com.carloscarmo.poof</string>
     <key>CFBundleVersion</key><string>1.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key><string>APPL</string>
