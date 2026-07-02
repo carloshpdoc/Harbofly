@@ -86,10 +86,14 @@ final class DiskScanner: ObservableObject {
     // MARK: private
 
     private func diskSpace() -> (Int64, Int64) {
-        let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
-        if let v = try? home.resourceValues(forKeys: keys) {
-            let free = Int64(v.volumeAvailableCapacityForImportantUsage ?? 0)
-            let total = Int64(v.volumeTotalCapacity ?? 0)
+        // statfs = leitura direta do filesystem, sem o cache de resourceValues
+        // (volumeAvailableCapacityForImportantUsage fica preso à instância da URL
+        // e não refletia a deleção na hora).
+        var st = statfs()
+        if statfs(NSHomeDirectory(), &st) == 0 {
+            let bsize = Int64(st.f_bsize)
+            let free = Int64(st.f_bavail) * bsize
+            let total = Int64(st.f_blocks) * bsize
             return (free, total)
         }
         return (0, 0)
