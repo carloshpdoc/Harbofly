@@ -178,6 +178,7 @@ final class DiskScanner: ObservableObject {
 
 struct ContentView: View {
     @ObservedObject var scanner: DiskScanner
+    @Environment(\.openWindow) private var openWindow
     @State private var selection = Set<UUID>()
     @State private var confirming = false
     @State private var launchAtLogin = false
@@ -201,14 +202,20 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            Divider()
-            listSection
-            Divider()
-            footer
+        ZStack {
+            VStack(alignment: .leading, spacing: 10) {
+                header
+                Divider()
+                listSection
+                Divider()
+                footer
+            }
+            .padding(12)
+            .disabled(confirming || showSupport)
+
+            if confirming { confirmOverlay }
+            if showSupport { supportOverlay }
         }
-        .padding(12)
         .frame(width: 470)
         .onAppear {
             launchAtLogin = (SMAppService.mainApp.status == .enabled)
@@ -221,20 +228,13 @@ struct ContentView: View {
                 if scanner.lastFreedBytes > 0 { pixCopied = false; showSupport = true }
             }
         }
-        .confirmationDialog(
-            "Excluir \(selectedTargets.count) item(ns) — \(fmt(selectedBytes))?",
-            isPresented: $confirming, titleVisibility: .visible
-        ) {
-            Button("Excluir permanentemente", role: .destructive) {
-                let items = selectedTargets
-                selection.removeAll()
-                scanner.delete(items)
-            }
-            Button("Cancelar", role: .cancel) {}
-        } message: {
-            Text("A exclusão é permanente (não vai pra Lixeira, pra liberar espaço na hora).")
-        }
-        .sheet(isPresented: $showSupport) { supportSheet }
+    }
+
+    // Abre a janela de app (dock + foco), fora da barra de menu.
+    func openMainWindow() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "main")
     }
 
     private func setLoginItem(_ enabled: Bool) {
@@ -254,40 +254,77 @@ struct ContentView: View {
         pixCopied = true
     }
 
-    private var supportSheet: some View {
-        VStack(spacing: 14) {
-            Text("☕").font(.system(size: 44))
-            Text(scanner.lastFreedBytes > 0 ? "Liberamos \(fmt(scanner.lastFreedBytes))!" : "Obrigado! 💙")
-                .font(.title3.bold())
-            Text("\(AppInfo.name) é grátis. Se te ajudou, me paga um café (R$2) pra apoiar o projeto 💙")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    // MARK: Overlays (inline — não fecham o popover da barra de menu)
 
-            Button {
-                copyPix()
-            } label: {
-                Label(pixCopied ? "Chave PIX copiada!" : "Copiar chave PIX (R$2)",
-                      systemImage: pixCopied ? "checkmark.circle.fill" : "doc.on.doc")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-
-            if let url = URL(string: Support.webURL) {
-                Button {
-                    NSWorkspace.shared.open(url)
-                } label: {
-                    Label("Buy Me a Coffee", systemImage: "safari").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Button("Talvez depois") { showSupport = false }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+    private func overlayCard<V: View>(@ViewBuilder _ content: () -> V) -> some View {
+        ZStack {
+            Color.black.opacity(0.4).ignoresSafeArea()
+            content()
+                .padding(22)
+                .frame(width: 320)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .shadow(radius: 24)
         }
-        .padding(24)
-        .frame(width: 320)
+    }
+
+    private var confirmOverlay: some View {
+        overlayCard {
+            VStack(spacing: 14) {
+                Text("Excluir \(selectedTargets.count) item(ns) — \(fmt(selectedBytes))?")
+                    .font(.headline).multilineTextAlignment(.center)
+                Text("A exclusão é permanente (não vai pra Lixeira, pra liberar espaço na hora).")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(role: .destructive) {
+                    let items = selectedTargets
+                    selection.removeAll()
+                    confirming = false
+                    scanner.delete(items)
+                } label: {
+                    Text("Excluir permanentemente").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).tint(.red)
+                Button("Cancelar") { confirming = false }
+                    .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private var supportOverlay: some View {
+        overlayCard {
+            VStack(spacing: 14) {
+                Text("☕").font(.system(size: 44))
+                Text(scanner.lastFreedBytes > 0 ? "Liberamos \(fmt(scanner.lastFreedBytes))!" : "Obrigado! 💙")
+                    .font(.title3.bold())
+                Text("\(AppInfo.name) é grátis. Se te ajudou, me paga um café (R$2) pra apoiar o projeto 💙")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    copyPix()
+                } label: {
+                    Label(pixCopied ? "Chave PIX copiada!" : "Copiar chave PIX (R$2)",
+                          systemImage: pixCopied ? "checkmark.circle.fill" : "doc.on.doc")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                if let url = URL(string: Support.webURL) {
+                    Button {
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        Label("Buy Me a Coffee", systemImage: "safari").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Button("Talvez depois") { showSupport = false }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var header: some View {
@@ -297,6 +334,11 @@ struct ContentView: View {
                 Text(AppInfo.name).font(.headline)
                 Spacer()
                 if scanner.scanning { ProgressView().controlSize(.small) }
+                Button { openMainWindow() } label: {
+                    Image(systemName: "macwindow")
+                }
+                .buttonStyle(.plain)
+                .help("Abrir em janela")
             }
             ProgressView(value: 1 - freeRatio)
                 .tint(freeRatio < 0.1 ? .red : (freeRatio < 0.2 ? .orange : .accentColor))
@@ -443,6 +485,13 @@ struct DiskWatchApp: App {
             Image(systemName: lowSpace ? "internaldrive.fill" : "internaldrive")
         }
         .menuBarExtraStyle(.window)
+
+        Window(AppInfo.name, id: "main") {
+            ContentView(scanner: scanner)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minHeight: 620)
+        }
+        .windowResizability(.contentSize)
     }
 
     private var lowSpace: Bool {
