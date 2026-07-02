@@ -1,0 +1,10 @@
+# SwiftPM build output
+/.build/
+.swiftpm/
+Package.resolved
+
+# App bundle gerado pelo make-app.sh
+/DiskWatch.app/
+
+# macOS
+.DS_Store
