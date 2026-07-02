@@ -33,8 +33,20 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-echo "==> Assinando (ad-hoc)…"
-codesign --force --deep --sign - "$APP"
+# SIGN_ID:
+#   "-"  (default)  → assinatura ad-hoc (dev local)
+#   "Developer ID Application: … (TEAMID)" → assinatura real p/ notarização
+SIGN_ID="${SIGN_ID:--}"
+
+if [ "$SIGN_ID" = "-" ]; then
+    echo "==> Assinando (ad-hoc)…"
+    codesign --force --deep --sign - "$APP"
+else
+    echo "==> Assinando com Developer ID + hardened runtime…"
+    codesign --force --deep --timestamp --options runtime \
+        --sign "$SIGN_ID" "$APP"
+    codesign --verify --strict --verbose=2 "$APP"
+fi
 
 echo "==> Pronto: $(pwd)/$APP"
 echo "    Abrir com: open $APP"

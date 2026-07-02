@@ -3,8 +3,9 @@
 .swiftpm/
 Package.resolved
 
-# App bundle gerado pelo make-app.sh
+# App bundle e zip de distribuição (gerados)
 /DiskWatch.app/
+/DiskWatch.zip
 
 # macOS
 .DS_Store
