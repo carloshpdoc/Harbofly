@@ -1,5 +1,14 @@
 import SwiftUI
 import AppKit
+import ServiceManagement
+
+// MARK: - Config
+
+/// Apoio (tip jar) — troque pelos seus dados.
+enum Support {
+    static let pixKey = "SUA_CHAVE_PIX@email.com"          // TODO: sua chave PIX
+    static let webURL = "https://buymeacoffee.com/SEU_USER" // TODO: opcional (Buy Me a Coffee / Ko-fi)
+}
 
 // MARK: - Model
 
@@ -31,6 +40,8 @@ final class DiskScanner: ObservableObject {
     @Published var freeBytes: Int64 = 0
     @Published var totalBytes: Int64 = 0
     @Published var lastScan: Date?
+    @Published var lastFreedBytes: Int64 = 0
+    @Published var justCleaned = false
 
     private let home = FileManager.default.homeDirectoryForCurrentUser
     private let minBytes: Int64 = 10_000_000 // ignora ruído < 10 MB
@@ -54,11 +65,16 @@ final class DiskScanner: ObservableObject {
     }
 
     func delete(_ items: [CleanTarget]) {
+        let toFree = items.reduce(Int64(0)) { $0 + $1.bytes }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             for item in items {
                 try? FileManager.default.removeItem(at: item.url)
             }
-            DispatchQueue.main.async { self?.scan() }
+            DispatchQueue.main.async {
+                self?.lastFreedBytes = toFree
+                self?.justCleaned = true
+                self?.scan()
+            }
         }
     }
 
@@ -159,6 +175,9 @@ struct ContentView: View {
     @ObservedObject var scanner: DiskScanner
     @State private var selection = Set<UUID>()
     @State private var confirming = false
+    @State private var launchAtLogin = false
+    @State private var showSupport = false
+    @State private var pixCopied = false
 
     private let timer = Timer.publish(every: 1800, on: .main, in: .common).autoconnect()
 
@@ -186,8 +205,17 @@ struct ContentView: View {
         }
         .padding(12)
         .frame(width: 470)
-        .onAppear { if scanner.targets.isEmpty { scanner.scan() } }
+        .onAppear {
+            launchAtLogin = (SMAppService.mainApp.status == .enabled)
+            if scanner.targets.isEmpty { scanner.scan() }
+        }
         .onReceive(timer) { _ in scanner.scan() }
+        .onChange(of: scanner.justCleaned) { _, cleaned in
+            if cleaned {
+                scanner.justCleaned = false
+                if scanner.lastFreedBytes > 0 { pixCopied = false; showSupport = true }
+            }
+        }
         .confirmationDialog(
             "Excluir \(selectedTargets.count) item(ns) — \(fmt(selectedBytes))?",
             isPresented: $confirming, titleVisibility: .visible
@@ -201,6 +229,60 @@ struct ContentView: View {
         } message: {
             Text("A exclusão é permanente (não vai pra Lixeira, pra liberar espaço na hora).")
         }
+        .sheet(isPresented: $showSupport) { supportSheet }
+    }
+
+    private func setLoginItem(_ enabled: Bool) {
+        do {
+            if enabled { try SMAppService.mainApp.register() }
+            else { try SMAppService.mainApp.unregister() }
+        } catch {
+            // reverte o toggle pro estado real se falhar
+            launchAtLogin = (SMAppService.mainApp.status == .enabled)
+        }
+    }
+
+    private func copyPix() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(Support.pixKey, forType: .string)
+        pixCopied = true
+    }
+
+    private var supportSheet: some View {
+        VStack(spacing: 14) {
+            Text("☕").font(.system(size: 44))
+            Text(scanner.lastFreedBytes > 0 ? "Liberamos \(fmt(scanner.lastFreedBytes))!" : "Obrigado! 💙")
+                .font(.title3.bold())
+            Text("DiskWatch é grátis. Se te ajudou, me paga um café (R$2) pra apoiar o projeto 💙")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                copyPix()
+            } label: {
+                Label(pixCopied ? "Chave PIX copiada!" : "Copiar chave PIX (R$2)",
+                      systemImage: pixCopied ? "checkmark.circle.fill" : "doc.on.doc")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+
+            if let url = URL(string: Support.webURL) {
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    Label("Buy Me a Coffee", systemImage: "safari").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Button("Talvez depois") { showSupport = false }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+        }
+        .padding(24)
+        .frame(width: 320)
     }
 
     private var header: some View {
@@ -315,6 +397,22 @@ struct ContentView: View {
                 }
                 Spacer()
                 Button("Sair") { NSApp.terminate(nil) }
+            }
+            Divider()
+            HStack {
+                Toggle("Abrir no login", isOn: $launchAtLogin)
+                    .toggleStyle(.checkbox)
+                    .onChange(of: launchAtLogin) { _, on in setLoginItem(on) }
+                Spacer()
+                Button {
+                    scanner.lastFreedBytes = 0
+                    pixCopied = false
+                    showSupport = true
+                } label: {
+                    Label("Apoiar ☕", systemImage: "heart").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.pink)
             }
         }
     }
