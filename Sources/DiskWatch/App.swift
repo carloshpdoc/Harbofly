@@ -6,7 +6,7 @@ import ServiceManagement
 
 /// Nome de exibição do app. Trocar aqui reflete na UI inteira.
 enum AppInfo {
-    static let name = "Poof"
+    static let name = "Harbofly"
 }
 
 /// Apoio (tip jar) — troque pelos seus dados.

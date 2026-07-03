@@ -1,10 +1,10 @@
-# Poof ☁️
+# Harbofly
 
-> Disco lotado? **Poof.** Sumiu.
+> Seu disco leve, sem esforço. → [harbofly.app](https://harbofly.app)
 
 App de menu bar para macOS que **descobre sozinho** o que está ocupando seu disco e deixa você limpar com um clique — sem configurar path nenhum.
 
-Nasceu de uma dor real: um Mac de dev iOS/Android acumula dezenas de GB em build artifacts e caches (`build/`, `.build/`, `node_modules/`, `DerivedData`, caches de SPM/Homebrew/Yarn/pip…) que ninguém lembra de limpar. O Poof varre esses lugares automaticamente, mostra quanto dá pra recuperar e organiza por nível de risco.
+Nasceu de uma dor real: um Mac de dev iOS/Android acumula dezenas de GB em build artifacts e caches (`build/`, `.build/`, `node_modules/`, `DerivedData`, caches de SPM/Homebrew/Yarn/pip…) que ninguém lembra de limpar. O Harbofly varre esses lugares automaticamente, mostra quanto dá pra recuperar e organiza por nível de risco.
 
 ## Features
 
@@ -48,18 +48,18 @@ Itens abaixo de 10 MB são ignorados pra reduzir ruído. Os alvos ficam em `scan
 ## Build & Run
 
 ```bash
-# Gera Poof.app assinado (ad-hoc) e mostra onde ficou
+# Gera Harbofly.app assinado (ad-hoc) e mostra onde ficou
 ./make-app.sh
 
 # Abre o app (ícone aparece na barra de menu)
-open Poof.app
+open Harbofly.app
 ```
 
 Para distribuir fora da Mac App Store (assina com Developer ID, notariza e "staple"):
 
 ```bash
 # requer ASC_KEY_ID e ASC_ISSUER_ID no ambiente + a .p8 em ~/.appstoreconnect/private_keys/
-./notarize.sh   # produz Poof.zip pronto pra download
+./notarize.sh   # produz Harbofly.zip pronto pra download
 ```
 
 Durante o desenvolvimento:
@@ -76,7 +76,7 @@ xcrun swift build -c release # release
 DiskWatch/                       # pasta/target interno do SwiftPM
 ├── Package.swift                # SwiftPM (macOS 14+)
 ├── Sources/DiskWatch/App.swift  # app inteiro: scanner + UI (nome de exibição em AppInfo.name)
-├── make-app.sh                  # monta o Poof.app
+├── make-app.sh                  # monta o Harbofly.app
 ├── notarize.sh                  # assina (Developer ID) + notariza + staple
 └── README.md
 ```

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Assina (Developer ID), notariza e "staple" o Poof.app.
+# Assina (Developer ID), notariza e "staple" o Harbofly.app.
 # Produz um .zip pronto pra distribuir fora da Mac App Store.
 #
 # Credenciais via env (ex.: exportadas no ~/.zshrc — NUNCA commitar no repo):
@@ -10,8 +10,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="Poof.app"
-ZIP="Poof.zip"
+APP="Harbofly.app"
+ZIP="Harbofly.zip"
 
 # Credenciais NÃO ficam no repo — leia do ambiente (ex.: exportadas no ~/.zshrc).
 : "${ASC_KEY_ID:?Set ASC_KEY_ID (App Store Connect API Key ID)}"

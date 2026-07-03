@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP_NAME="Poof"                       # nome de exibição / bundle
+APP_NAME="Harbofly"                   # nome de exibição / bundle
 APP="${APP_NAME}.app"
 BIN=".build/release/DiskWatch"        # executável do SwiftPM target (interno)
 
@@ -22,7 +22,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
     <key>CFBundleName</key><string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
-    <key>CFBundleIdentifier</key><string>com.carloscarmo.poof</string>
+    <key>CFBundleIdentifier</key><string>app.harbofly</string>
     <key>CFBundleVersion</key><string>1.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key><string>APPL</string>
