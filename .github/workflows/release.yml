@@ -66,3 +66,20 @@ jobs:
           gh release create "${{ github.ref_name }}" Harbofly.dmg \
             --title "${{ github.ref_name }}" \
             --generate-notes
+
+      - name: Bump automático do cask no tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          VER="${TAG#v}"                                   # v1.1.0 -> 1.1.0
+          SHA="$(shasum -a 256 Harbofly.dmg | cut -d' ' -f1)"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/carloshpdoc/homebrew-tap.git" tap
+          cd tap
+          # runner é macOS -> sed BSD (-i '')
+          sed -i '' -E "s/^  version \"[^\"]+\"/  version \"${VER}\"/" Casks/harbofly.rb
+          sed -i '' -E "s/^  sha256 \"[0-9a-f]{64}\"/  sha256 \"${SHA}\"/" Casks/harbofly.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "cask: harbofly ${VER}"
+          git push
