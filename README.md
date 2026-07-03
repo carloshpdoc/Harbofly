@@ -85,7 +85,7 @@ Harbofly/                        # pasta/target interno do SwiftPM
 
 - [x] Launch no login (`SMAppService`)
 - [x] Notarização (Developer ID, fora da MAS)
-- [ ] Tier 3 informativo (CoreSimulator, Application Support, Downloads) — só leitura
-- [ ] Default para Lixeira (permanente como opção)
-- [ ] Notificação quando o disco cair abaixo de X%
-- [ ] Ícone próprio
+- [x] Tier 3 informativo (CoreSimulator, Application Support, Downloads) — só leitura
+- [x] Default para Lixeira (permanente como opção)
+- [x] Notificação quando o disco cair abaixo de X%
+- [x] Ícone próprio
