@@ -2,9 +2,9 @@
 import PackageDescription
 
 let package = Package(
-    name: "DiskWatch",
+    name: "Harbofly",
     platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "DiskWatch", path: "Sources/DiskWatch")
+        .executableTarget(name: "Harbofly", path: "Sources/Harbofly")
     ]
 )

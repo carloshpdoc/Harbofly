@@ -6,10 +6,6 @@ Package.resolved
 # App bundle e zip de distribuição (gerados)
 /Harbofly.app/
 /Harbofly.zip
-/Poof.app/
-/Poof.zip
-/DiskWatch.app/
-/DiskWatch.zip
 
 # macOS
 .DS_Store

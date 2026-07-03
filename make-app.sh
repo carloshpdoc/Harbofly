@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 APP_NAME="Harbofly"                   # nome de exibição / bundle
 APP="${APP_NAME}.app"
-BIN=".build/release/DiskWatch"        # executável do SwiftPM target (interno)
+BIN=".build/release/Harbofly"         # executável do SwiftPM target (interno)
 
 echo "==> Compilando (release)…"
 xcrun swift build -c release
@@ -13,7 +13,7 @@ xcrun swift build -c release
 echo "==> Montando ${APP}…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/DiskWatch"
+cp "$BIN" "$APP/Contents/MacOS/Harbofly"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -26,7 +26,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>1.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleExecutable</key><string>DiskWatch</string>
+    <key>CFBundleExecutable</key><string>Harbofly</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>

@@ -38,7 +38,7 @@ Nasceu de uma dor real: um Mac de dev iOS/Android acumula dezenas de GB em build
 | `Caches/ms-playwright` | 🟡 | Browsers baixados pelo Playwright |
 | `Caches/Google` | 🟡 | Cache do Google/Chrome |
 
-Itens abaixo de 10 MB são ignorados pra reduzir ruído. Os alvos ficam em `scanDevelopment()` e `scanLibrary()` no `Sources/DiskWatch/App.swift` — fáceis de ajustar.
+Itens abaixo de 10 MB são ignorados pra reduzir ruído. Os alvos ficam em `scanDevelopment()` e `scanLibrary()` no `Sources/Harbofly/App.swift` — fáceis de ajustar.
 
 ## Requisitos
 
@@ -73,9 +73,9 @@ xcrun swift build -c release # release
 ## Estrutura
 
 ```
-DiskWatch/                       # pasta/target interno do SwiftPM
+Harbofly/                        # pasta/target interno do SwiftPM
 ├── Package.swift                # SwiftPM (macOS 14+)
-├── Sources/DiskWatch/App.swift  # app inteiro: scanner + UI (nome de exibição em AppInfo.name)
+├── Sources/Harbofly/App.swift   # app inteiro: scanner + UI (nome de exibição em AppInfo.name)
 ├── make-app.sh                  # monta o Harbofly.app
 ├── notarize.sh                  # assina (Developer ID) + notariza + staple
 └── README.md

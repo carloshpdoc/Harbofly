@@ -478,7 +478,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct DiskWatchApp: App {
+struct HarboflyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var scanner = DiskScanner()
 
