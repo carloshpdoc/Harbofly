@@ -8,6 +8,12 @@ APP="${APP_NAME}.app"
 BIN=".build/release/Harbofly"         # executável do SwiftPM target (interno)
 ICON="Assets/Harbofly.icns"
 
+# Versão: SemVer user-facing vem do arquivo VERSION (fonte única);
+# build number monotônico = nº de commits (garante que sempre cresce).
+VERSION="$(cat VERSION 2>/dev/null || echo 0.0.0)"
+BUILD="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+echo "==> Versão ${VERSION} (build ${BUILD})"
+
 echo "==> Compilando (release)…"
 xcrun swift build -c release
 
@@ -26,8 +32,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key><string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key><string>app.harbofly</string>
-    <key>CFBundleVersion</key><string>1.0</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>${BUILD}</string>
+    <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleExecutable</key><string>Harbofly</string>
     <key>CFBundleIconFile</key><string>Harbofly.icns</string>

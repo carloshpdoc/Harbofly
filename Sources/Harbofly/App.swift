@@ -8,6 +8,9 @@ import UserNotifications
 /// Nome de exibição do app. Trocar aqui reflete na UI inteira.
 enum AppInfo {
     static let name = "Harbofly"
+    // Lê do próprio bundle (setado pelo make-app.sh). "dev" quando roda via `swift run`.
+    static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev" }
+    static var build: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0" }
 }
 
 /// Apoio (tip jar).
@@ -578,6 +581,9 @@ struct ContentView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Text("v\(AppInfo.version)")
+                    .font(.caption2).foregroundStyle(.tertiary)
+                    .help("Build \(AppInfo.build)")
                 Button("Sair") { NSApp.terminate(nil) }
             }
             Divider()
