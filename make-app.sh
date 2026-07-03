@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 APP_NAME="Harbofly"                   # nome de exibição / bundle
 APP="${APP_NAME}.app"
 BIN=".build/release/Harbofly"         # executável do SwiftPM target (interno)
+ICON="Assets/Harbofly.icns"
 
 echo "==> Compilando (release)…"
 xcrun swift build -c release
@@ -14,6 +15,8 @@ echo "==> Montando ${APP}…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Harbofly"
+
+cp "$ICON" "$APP/Contents/Resources/Harbofly.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -27,6 +30,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleExecutable</key><string>Harbofly</string>
+    <key>CFBundleIconFile</key><string>Harbofly.icns</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>

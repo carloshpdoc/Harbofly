@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ServiceManagement
+import UserNotifications
 
 // MARK: - Config
 
@@ -9,10 +10,18 @@ enum AppInfo {
     static let name = "Harbofly"
 }
 
-/// Apoio (tip jar) — troque pelos seus dados.
+/// Apoio (tip jar).
 enum Support {
-    static let pixKey = "SUA_CHAVE_PIX@email.com"          // TODO: sua chave PIX
-    static let webURL = "https://buymeacoffee.com/SEU_USER" // TODO: opcional (Buy Me a Coffee / Ko-fi)
+    static let pixKey = "1570c17b-7e20-4258-8ad8-f83f15250502"
+    static let webURL = "https://ko-fi.com/carloshperc"
+}
+
+/// Chaves de preferência (UserDefaults / @AppStorage).
+enum Prefs {
+    static let deletePermanently = "deletePermanently"
+    static let notifyEnabled = "notifyEnabled"
+    static let notifyThreshold = "notifyThreshold"
+    static let defaultThreshold = 0.10
 }
 
 // MARK: - Model
@@ -20,6 +29,10 @@ enum Support {
 enum Tier: String {
     case safe = "Seguro (regenera sozinho)"
     case caution = "Cuidado (recria, mas custa)"
+    case info = "Informativo (só leitura)"
+
+    /// Tier informativo: mostrado só pra ciência, o app nunca apaga.
+    var isReadOnly: Bool { self == .info }
 }
 
 struct CleanTarget: Identifiable {
@@ -46,7 +59,12 @@ final class DiskScanner: ObservableObject {
     @Published var totalBytes: Int64 = 0
     @Published var lastScan: Date?
     @Published var lastFreedBytes: Int64 = 0
+    @Published var lastDeletePermanent = false
     @Published var justCleaned = false
+
+    /// Evita disparar a notificação de disco baixo repetidamente: só notifica
+    /// quando o espaço livre CRUZA pra baixo do limite.
+    private var wasBelowThreshold = false
 
     private let home = FileManager.default.homeDirectoryForCurrentUser
     private let minBytes: Int64 = 10_000_000 // ignora ruído < 10 MB
@@ -57,7 +75,7 @@ final class DiskScanner: ObservableObject {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             let (free, total) = self.diskSpace()
-            var found = self.scanDevelopment() + self.scanLibrary()
+            var found = self.scanDevelopment() + self.scanLibrary() + self.scanInfo()
             found.sort { $0.bytes > $1.bytes }
             DispatchQueue.main.async {
                 self.freeBytes = free
@@ -65,18 +83,29 @@ final class DiskScanner: ObservableObject {
                 self.targets = found
                 self.lastScan = Date()
                 self.scanning = false
+                self.checkLowSpaceNotification()
             }
         }
     }
 
-    func delete(_ items: [CleanTarget]) {
-        let toFree = items.reduce(Int64(0)) { $0 + $1.bytes }
+    /// Apaga os itens. `permanently == false` (default) move pra Lixeira
+    /// (recuperável, mas o espaço só é liberado ao esvaziar a Lixeira);
+    /// `true` remove de vez, liberando o espaço na hora.
+    /// Itens read-only (tier informativo) são ignorados por segurança.
+    func delete(_ items: [CleanTarget], permanently: Bool) {
+        let deletable = items.filter { !$0.tier.isReadOnly }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            for item in items {
-                try? FileManager.default.removeItem(at: item.url)
+            var freed: Int64 = 0
+            for item in deletable {
+                if permanently {
+                    if (try? FileManager.default.removeItem(at: item.url)) != nil { freed += item.bytes }
+                } else {
+                    if (try? FileManager.default.trashItem(at: item.url, resultingItemURL: nil)) != nil { freed += item.bytes }
+                }
             }
             DispatchQueue.main.async {
-                self?.lastFreedBytes = toFree
+                self?.lastFreedBytes = freed
+                self?.lastDeletePermanent = permanently
                 self?.justCleaned = true
                 self?.scan()
             }
@@ -176,6 +205,53 @@ final class DiskScanner: ObservableObject {
         }
         return out
     }
+
+    /// Tier informativo (só leitura): pastas grandes que o app NÃO apaga, mas
+    /// mostra pra você saber onde o espaço está e agir manualmente.
+    private func scanInfo() -> [CleanTarget] {
+        let specs: [(String, String, String)] = [
+            ("Library/Developer/CoreSimulator", "CoreSimulator",
+             "Simuladores do Xcode — apague devices velhos pelo Xcode ou `xcrun simctl delete unavailable`"),
+            ("Library/Application Support", "Application Support",
+             "Dados de apps instalados — revise pelo Finder, não apague às cegas"),
+            ("Downloads", "Downloads",
+             "Sua pasta de downloads — revise e limpe manualmente pelo Finder"),
+        ]
+        var out: [CleanTarget] = []
+        for (rel, label, detail) in specs {
+            let url = home.appendingPathComponent(rel)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            let b = size(of: url)
+            if b > minBytes {
+                out.append(CleanTarget(url: url, label: label, detail: detail, tier: .info, bytes: b))
+            }
+        }
+        return out
+    }
+
+    // MARK: notificação de disco baixo
+
+    private var notifyEnabled: Bool {
+        (UserDefaults.standard.object(forKey: Prefs.notifyEnabled) as? Bool) ?? true
+    }
+    private var notifyThreshold: Double {
+        (UserDefaults.standard.object(forKey: Prefs.notifyThreshold) as? Double) ?? Prefs.defaultThreshold
+    }
+
+    private func checkLowSpaceNotification() {
+        guard totalBytes > 0 else { return }
+        let ratio = Double(freeBytes) / Double(totalBytes)
+        let below = ratio < notifyThreshold
+        defer { wasBelowThreshold = below }
+        guard notifyEnabled, below, !wasBelowThreshold else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "\(AppInfo.name): disco quase cheio"
+        content.body = "Só \(Int(ratio * 100))% livre (\(fmt(freeBytes))). Abra o \(AppInfo.name) pra liberar espaço."
+        content.sound = .default
+        let req = UNNotificationRequest(identifier: "harbofly.lowspace", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
+    }
 }
 
 // MARK: - UI
@@ -189,13 +265,19 @@ struct ContentView: View {
     @State private var showSupport = false
     @State private var pixCopied = false
 
+    @AppStorage(Prefs.deletePermanently) private var deletePermanently = false
+    @AppStorage(Prefs.notifyEnabled) private var notifyEnabled = true
+    @AppStorage(Prefs.notifyThreshold) private var notifyThreshold = Prefs.defaultThreshold
+
     private let timer = Timer.publish(every: 1800, on: .main, in: .common).autoconnect()
 
-    private var reclaimable: Int64 { scanner.targets.reduce(0) { $0 + $1.bytes } }
+    // Recuperável = só o que o app realmente apaga (exclui o tier informativo).
+    private var reclaimable: Int64 { scanner.targets.filter { !$0.tier.isReadOnly }.reduce(0) { $0 + $1.bytes } }
     private var selectedTargets: [CleanTarget] { scanner.targets.filter { selection.contains($0.id) } }
     private var selectedBytes: Int64 { selectedTargets.reduce(0) { $0 + $1.bytes } }
     private var safeTargets: [CleanTarget] { scanner.targets.filter { $0.tier == .safe } }
     private var cautionTargets: [CleanTarget] { scanner.targets.filter { $0.tier == .caution } }
+    private var infoTargets: [CleanTarget] { scanner.targets.filter { $0.tier == .info } }
     private var freeRatio: Double {
         scanner.totalBytes > 0 ? Double(scanner.freeBytes) / Double(scanner.totalBytes) : 1
     }
@@ -276,19 +358,32 @@ struct ContentView: View {
             VStack(spacing: 14) {
                 Text("Excluir \(selectedTargets.count) item(ns) — \(fmt(selectedBytes))?")
                     .font(.headline).multilineTextAlignment(.center)
-                Text("A exclusão é permanente (não vai pra Lixeira, pra liberar espaço na hora).")
+
+                Picker("", selection: $deletePermanently) {
+                    Text("Mover pra Lixeira").tag(false)
+                    Text("Excluir de vez").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Text(deletePermanently
+                     ? "Exclusão permanente: libera o espaço na hora, sem passar pela Lixeira. Não dá pra desfazer."
+                     : "Vai pra Lixeira: dá pra recuperar, mas o espaço só é liberado ao esvaziar a Lixeira.")
                     .font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
+
                 Button(role: .destructive) {
                     let items = selectedTargets
+                    let perm = deletePermanently
                     selection.removeAll()
                     confirming = false
-                    scanner.delete(items)
+                    scanner.delete(items, permanently: perm)
                 } label: {
-                    Text("Excluir permanentemente").frame(maxWidth: .infinity)
+                    Text(deletePermanently ? "Excluir permanentemente" : "Mover pra Lixeira")
+                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent).tint(.red)
+                .buttonStyle(.borderedProminent).tint(deletePermanently ? .red : .accentColor)
                 Button("Cancelar") { confirming = false }
                     .buttonStyle(.bordered)
             }
@@ -299,7 +394,11 @@ struct ContentView: View {
         overlayCard {
             VStack(spacing: 14) {
                 Text("☕").font(.system(size: 44))
-                Text(scanner.lastFreedBytes > 0 ? "Liberamos \(fmt(scanner.lastFreedBytes))!" : "Obrigado! 💙")
+                Text(scanner.lastFreedBytes > 0
+                     ? (scanner.lastDeletePermanent
+                        ? "Liberamos \(fmt(scanner.lastFreedBytes))!"
+                        : "\(fmt(scanner.lastFreedBytes)) pra Lixeira!")
+                     : "Obrigado! 💙")
                     .font(.title3.bold())
                 Text("\(AppInfo.name) é grátis. Se te ajudou, me paga um café (R$2) pra apoiar o projeto 💙")
                     .multilineTextAlignment(.center)
@@ -374,6 +473,10 @@ struct ContentView: View {
                             tierHeader("🟡 Cuidado — recria, mas custa", cautionTargets)
                             ForEach(cautionTargets) { row($0) }
                         }
+                        if !infoTargets.isEmpty {
+                            tierHeader("🔵 Informativo — só pra você saber (o app não apaga)", infoTargets)
+                            ForEach(infoTargets) { infoRow($0) }
+                        }
                     }
                     .padding(.trailing, 4)
                 }
@@ -422,6 +525,34 @@ struct ContentView: View {
         }
     }
 
+    // Linha read-only do tier informativo: sem seleção/exclusão, só revela no Finder.
+    private func infoRow(_ t: CleanTarget) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle")
+                .font(.title3).foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(t.label).font(.headline).lineLimit(1)
+                    Spacer()
+                    Text(fmt(t.bytes)).font(.headline.monospacedDigit())
+                }
+                Text(relPath(t.url))
+                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+                Text(t.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([t.url])
+                } label: {
+                    Label("Revelar no Finder", systemImage: "magnifyingglass").font(.caption)
+                }
+                .buttonStyle(.plain).foregroundStyle(.blue).padding(.top, 2)
+            }
+        }
+        .padding(10)
+        .background(Color.blue.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     private var footer: some View {
         VStack(spacing: 8) {
             HStack {
@@ -450,6 +581,20 @@ struct ContentView: View {
                 Button("Sair") { NSApp.terminate(nil) }
             }
             Divider()
+            HStack(spacing: 6) {
+                Toggle("Avisar quando o disco livre cair abaixo de", isOn: $notifyEnabled)
+                    .toggleStyle(.checkbox)
+                Picker("", selection: $notifyThreshold) {
+                    Text("5%").tag(0.05)
+                    Text("10%").tag(0.10)
+                    Text("15%").tag(0.15)
+                    Text("20%").tag(0.20)
+                }
+                .labelsHidden()
+                .frame(width: 66)
+                .disabled(!notifyEnabled)
+                Spacer()
+            }
             HStack {
                 Toggle("Abrir no login", isOn: $launchAtLogin)
                     .toggleStyle(.checkbox)
@@ -474,6 +619,7 @@ struct ContentView: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu bar only, sem dock
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 }
 
