@@ -37,14 +37,27 @@ notarize "$ZIP_TMP"
 xcrun stapler staple "$APP"
 rm -f "$ZIP_TMP"
 
-# 3) Monta o .dmg (app + alias do /Applications no mesmo janela)
-echo "==> Montando ${DMG}…"
+# 3) Monta o .dmg estilizado (create-dmg: janela + icone do app + seta pro Applications)
+command -v create-dmg >/dev/null || { echo "ERRO: create-dmg nao instalado (brew install create-dmg)"; exit 1; }
+echo "==> Montando ${DMG} (create-dmg)…"
 STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
-hdiutil create -volname "$VOL" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+# create-dmg pode retornar !=0 mesmo produzindo o dmg; validamos pela existencia do arquivo.
+set +e
+create-dmg \
+    --volname "$VOL" \
+    --volicon "Assets/Harbofly.icns" \
+    --window-pos 200 120 \
+    --window-size 540 380 \
+    --icon-size 128 \
+    --icon "$APP" 140 190 \
+    --hide-extension "$APP" \
+    --app-drop-link 400 190 \
+    "$DMG" "$STAGE"
+set -e
 rm -rf "$STAGE"
+[ -f "$DMG" ] || { echo "ERRO: create-dmg nao gerou $DMG"; exit 1; }
 
 # 4) Assina + notariza + staple o .dmg
 echo "==> Assinando e notarizando o ${DMG}…"
