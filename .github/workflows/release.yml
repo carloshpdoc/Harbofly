@@ -1,0 +1,68 @@
+name: Release
+
+# Dispara ao dar push numa tag vX.Y.Z. Builda, assina (Developer ID),
+# notariza, monta o .dmg, gera BUILD PROVENANCE (SLSA) e publica a Release.
+# Qualquer um pode verificar depois:
+#   gh attestation verify Harbofly.dmg --repo carloshpdoc/Harbofly
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write      # criar a Release
+  id-token: write      # OIDC pra atestação
+  attestations: write  # gravar a build provenance
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # historico completo -> build number = nº de commits
+
+      - name: Instalar create-dmg
+        run: brew install create-dmg
+
+      - name: Importar certificado Developer ID
+        env:
+          CERT_B64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PW: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KC_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PW" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KC_PW" build.keychain
+          security set-keychain-settings -lut 3600 build.keychain
+          security import "$RUNNER_TEMP/cert.p12" -k build.keychain -P "$CERT_PW" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PW" build.keychain
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Preparar chave ASC (.p8)
+        env:
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/asc.p8"
+
+      - name: Build + assinar + notarizar + .dmg
+        env:
+          SIGN_ID: ${{ secrets.SIGN_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          export ASC_KEY_PATH="$RUNNER_TEMP/asc.p8"
+          ./make-dmg.sh
+
+      - name: Build provenance (SLSA) do .dmg
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: Harbofly.dmg
+
+      - name: Publicar Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" Harbofly.dmg \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
