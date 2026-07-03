@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import ServiceManagement
 import UserNotifications
+import Sparkle
 
 // MARK: - Config
 
@@ -25,6 +26,13 @@ enum Prefs {
     static let notifyEnabled = "notifyEnabled"
     static let notifyThreshold = "notifyThreshold"
     static let defaultThreshold = 0.10
+    // Cadência da doação: quem já apoiou nunca mais é incomodado; quem adia
+    // é adiado por intervalos crescentes.
+    static let hasSupported = "hasSupported"
+    static let donateSnoozeUntil = "donateSnoozeUntil"
+    static let donateSnoozeCount = "donateSnoozeCount"
+    /// Dias de snooze por vez que o usuário clica "agora não" (crescente).
+    static let snoozeDays: [Double] = [7, 30, 90, 180]
 }
 
 // MARK: - Model
@@ -261,16 +269,28 @@ final class DiskScanner: ObservableObject {
 
 struct ContentView: View {
     @ObservedObject var scanner: DiskScanner
+    @ObservedObject var updater: Updater
     @Environment(\.openWindow) private var openWindow
     @State private var selection = Set<UUID>()
     @State private var confirming = false
     @State private var launchAtLogin = false
     @State private var showSupport = false
     @State private var pixCopied = false
+    /// Força a seção de doação mesmo pra quem já apoiou (quando o próprio usuário
+    /// clica em "Apoiar" no rodapé).
+    @State private var manualSupport = false
 
     @AppStorage(Prefs.deletePermanently) private var deletePermanently = false
     @AppStorage(Prefs.notifyEnabled) private var notifyEnabled = true
     @AppStorage(Prefs.notifyThreshold) private var notifyThreshold = Prefs.defaultThreshold
+    @AppStorage(Prefs.hasSupported) private var hasSupported = false
+    @AppStorage(Prefs.donateSnoozeUntil) private var donateSnoozeUntil = 0.0
+    @AppStorage(Prefs.donateSnoozeCount) private var donateSnoozeCount = 0
+
+    /// Só pede doação se a pessoa nunca apoiou e o snooze já venceu.
+    private var shouldAskDonate: Bool {
+        !hasSupported && Date().timeIntervalSince1970 > donateSnoozeUntil
+    }
 
     private let timer = Timer.publish(every: 1800, on: .main, in: .common).autoconnect()
 
@@ -341,6 +361,60 @@ struct ContentView: View {
         pb.clearContents()
         pb.setString(Support.pixKey, forType: .string)
         pixCopied = true
+        hasSupported = true // quem copiou o PIX não é mais incomodado
+    }
+
+    /// "Agora não": adia a próxima pergunta por um intervalo crescente.
+    private func snoozeDonate() {
+        let days = Prefs.snoozeDays[min(donateSnoozeCount, Prefs.snoozeDays.count - 1)]
+        donateSnoozeUntil = Date().timeIntervalSince1970 + days * 86_400
+        donateSnoozeCount += 1
+        showSupport = false
+        manualSupport = false
+    }
+
+    // MARK: Compartilhar conquista
+
+    /// Card 1200x675 (proporção OG/Twitter) com o quanto foi recuperado.
+    private func makeShareImage(freed: Int64) -> NSImage {
+        let size = NSSize(width: 1200, height: 675)
+        let img = NSImage(size: size)
+        img.lockFocus()
+
+        let rect = NSRect(origin: .zero, size: size)
+        NSGradient(colors: [
+            NSColor(srgbRed: 0.031, green: 0.063, blue: 0.110, alpha: 1),
+            NSColor(srgbRed: 0.051, green: 0.106, blue: 0.165, alpha: 1),
+        ])?.draw(in: rect, angle: 120)
+
+        let teal = NSColor(srgbRed: 0.31, green: 0.82, blue: 0.77, alpha: 1)
+        let ink = NSColor(srgbRed: 0.918, green: 0.949, blue: 1.0, alpha: 1)
+        let muted = NSColor(srgbRed: 0.56, green: 0.63, blue: 0.71, alpha: 1)
+
+        func draw(_ s: String, font: NSFont, color: NSColor, y: CGFloat) {
+            let p = NSMutableParagraphStyle(); p.alignment = .center
+            let attr: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: p]
+            let str = s as NSString
+            let h = str.size(withAttributes: attr).height
+            str.draw(in: NSRect(x: 0, y: y - h / 2, width: size.width, height: h), withAttributes: attr)
+        }
+
+        draw("Recuperei", font: .systemFont(ofSize: 60, weight: .semibold), color: muted, y: 470)
+        draw(fmt(freed), font: .systemFont(ofSize: 150, weight: .heavy), color: teal, y: 350)
+        draw("de espaço no meu Mac com o Harbofly 🗑️", font: .systemFont(ofSize: 44, weight: .medium), color: ink, y: 190)
+        draw("harbofly.app", font: .monospacedSystemFont(ofSize: 34, weight: .regular), color: muted, y: 95)
+
+        img.unlockFocus()
+        return img
+    }
+
+    private func shareAchievement() {
+        let image = makeShareImage(freed: scanner.lastFreedBytes)
+        let text = "Recuperei \(fmt(scanner.lastFreedBytes)) de espaço no meu Mac com o Harbofly 🗑️ https://harbofly.app"
+        let picker = NSSharingServicePicker(items: [image, text])
+        if let view = NSApp.keyWindow?.contentView {
+            picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
+        }
     }
 
     // MARK: Overlays (inline — não fecham o popover da barra de menu)
@@ -394,41 +468,68 @@ struct ContentView: View {
     }
 
     private var supportOverlay: some View {
-        overlayCard {
+        let freed = scanner.lastFreedBytes
+        let askDonate = manualSupport || shouldAskDonate
+        return overlayCard {
             VStack(spacing: 14) {
-                Text("☕").font(.system(size: 44))
-                Text(scanner.lastFreedBytes > 0
+                Text(freed > 0 ? "🎉" : "☕").font(.system(size: 44))
+                Text(freed > 0
                      ? (scanner.lastDeletePermanent
-                        ? "Liberamos \(fmt(scanner.lastFreedBytes))!"
-                        : "\(fmt(scanner.lastFreedBytes)) pra Lixeira!")
+                        ? "Você recuperou \(fmt(freed))!"
+                        : "\(fmt(freed)) mandados pra Lixeira!")
                      : "Obrigado! 💙")
                     .font(.title3.bold())
-                Text("\(AppInfo.name) é grátis. Se te ajudou, me paga um café (R$2) pra apoiar o projeto 💙")
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
 
-                Button {
-                    copyPix()
-                } label: {
-                    Label(pixCopied ? "Chave PIX copiada!" : "Copiar chave PIX (R$2)",
-                          systemImage: pixCopied ? "checkmark.circle.fill" : "doc.on.doc")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-
-                if let url = URL(string: Support.webURL) {
+                // Momento de valor: compartilhar a conquista (só após uma limpeza real).
+                if freed > 0 {
                     Button {
-                        NSWorkspace.shared.open(url)
+                        shareAchievement()
                     } label: {
-                        Label("Buy Me a Coffee", systemImage: "safari").frame(maxWidth: .infinity)
+                        Label("Compartilhar", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
                 }
 
-                Button("Talvez depois") { showSupport = false }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                if askDonate {
+                    Text("\(AppInfo.name) é grátis. Se te ajudou, me paga um café (R$2) pra apoiar o projeto 💙")
+                        .font(.callout)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        copyPix()
+                    } label: {
+                        Label(pixCopied ? "Chave PIX copiada!" : "Copiar chave PIX (R$2)",
+                              systemImage: pixCopied ? "checkmark.circle.fill" : "doc.on.doc")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    if let url = URL(string: Support.webURL) {
+                        Button {
+                            NSWorkspace.shared.open(url)
+                            hasSupported = true
+                        } label: {
+                            Label("Buy Me a Coffee", systemImage: "safari").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    HStack {
+                        Button("Já apoiei ❤️") { hasSupported = true; showSupport = false; manualSupport = false }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Agora não") { snoozeDonate() }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button("Fechar") { showSupport = false }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -601,6 +702,16 @@ struct ContentView: View {
                 .disabled(!notifyEnabled)
                 Spacer()
             }
+            if updater.isAvailable {
+                HStack {
+                    Toggle("Buscar atualizações automaticamente",
+                           isOn: Binding(get: { updater.autoCheck }, set: { updater.setAuto($0) }))
+                        .toggleStyle(.checkbox)
+                    Spacer()
+                    Button("Buscar agora") { updater.check() }
+                        .buttonStyle(.plain).foregroundStyle(.blue)
+                }
+            }
             HStack {
                 Toggle("Abrir no login", isOn: $launchAtLogin)
                     .toggleStyle(.checkbox)
@@ -609,6 +720,7 @@ struct ContentView: View {
                 Button {
                     scanner.lastFreedBytes = 0
                     pixCopied = false
+                    manualSupport = true
                     showSupport = true
                 } label: {
                     Label("Apoiar ☕", systemImage: "heart").font(.caption)
@@ -617,6 +729,35 @@ struct ContentView: View {
                 .foregroundStyle(.pink)
             }
         }
+    }
+}
+
+// MARK: - Updater (Sparkle)
+
+/// Wrapper do Sparkle. Só ativa quando rodando como app empacotado — o make-app.sh
+/// injeta `SUFeedURL`/`SUPublicEDKey` no Info.plist. Em `swift run` (dev) fica inerte,
+/// então o fluxo de desenvolvimento não depende de chave nenhuma.
+final class Updater: ObservableObject {
+    @Published private(set) var isAvailable = false
+    @Published var autoCheck = false
+    private let controller: SPUStandardUpdaterController?
+
+    init() {
+        if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
+            let c = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+            controller = c
+            isAvailable = true
+            autoCheck = c.updater.automaticallyChecksForUpdates
+        } else {
+            controller = nil
+        }
+    }
+
+    func check() { controller?.checkForUpdates(nil) }
+
+    func setAuto(_ on: Bool) {
+        controller?.updater.automaticallyChecksForUpdates = on
+        autoCheck = on
     }
 }
 
@@ -633,17 +774,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct HarboflyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var scanner = DiskScanner()
+    @StateObject private var updater = Updater()
 
     var body: some Scene {
         MenuBarExtra {
-            ContentView(scanner: scanner)
+            ContentView(scanner: scanner, updater: updater)
         } label: {
             Image(systemName: lowSpace ? "internaldrive.fill" : "internaldrive")
         }
         .menuBarExtraStyle(.window)
 
         Window(AppInfo.name, id: "main") {
-            ContentView(scanner: scanner)
+            ContentView(scanner: scanner, updater: updater)
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(minHeight: 620)
         }

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Harbofly</title>
+    <link>https://raw.githubusercontent.com/carloshpdoc/Harbofly/main/appcast.xml</link>
+    <description>Atualizações do Harbofly</description>
+    <language>pt-br</language>
+    <!-- Os <item> de release são gerados automaticamente pelo generate_appcast
+         no workflow de release (.github/workflows/release.yml). Não edite à mão. -->
+  </channel>
+</rss>

@@ -50,6 +50,7 @@ jobs:
           SIGN_ID: ${{ secrets.SIGN_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          SU_PUBLIC_ED_KEY: ${{ secrets.SU_PUBLIC_ED_KEY }}   # habilita o Sparkle no app
         run: |
           export ASC_KEY_PATH="$RUNNER_TEMP/asc.p8"
           ./make-dmg.sh
@@ -66,6 +67,31 @@ jobs:
           gh release create "${{ github.ref_name }}" Harbofly.dmg \
             --title "${{ github.ref_name }}" \
             --generate-notes
+
+      # Assina o DMG com a chave EdDSA e (re)gera o appcast.xml, apontando o
+      # enclosure pro asset da Release recém-criada. Commita de volta na main —
+      # é esse arquivo que o SUFeedURL do app lê.
+      - name: Gerar appcast do Sparkle
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          SPARKLE_VER=2.9.4
+          curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VER}/Sparkle-${SPARKLE_VER}.tar.xz" -o sparkle.tar.xz
+          mkdir -p sparkle-tools && tar xJf sparkle.tar.xz -C sparkle-tools
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_ed_priv"
+          mkdir -p dist && cp Harbofly.dmg dist/
+          ./sparkle-tools/bin/generate_appcast \
+            --ed-key-file "$RUNNER_TEMP/sparkle_ed_priv" \
+            --download-url-prefix "https://github.com/carloshpdoc/Harbofly/releases/download/${TAG}/" \
+            dist/
+          cp dist/appcast.xml appcast.xml
+          rm -f "$RUNNER_TEMP/sparkle_ed_priv"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "appcast: ${TAG}" || echo "sem mudança no appcast"
+          git push origin HEAD:main
 
       - name: Bump automático do cask no tap
         env:
