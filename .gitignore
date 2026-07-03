@@ -3,9 +3,10 @@
 .swiftpm/
 Package.resolved
 
-# App bundle e zip de distribuição (gerados)
+# App bundle e artefatos de distribuição (gerados)
 /Harbofly.app/
 /Harbofly.zip
+/Harbofly.dmg
 
 # macOS
 .DS_Store
