@@ -80,12 +80,3 @@ Harbofly/                        # pasta/target interno do SwiftPM
 ├── notarize.sh                  # assina (Developer ID) + notariza + staple
 └── README.md
 ```
-
-## Roadmap
-
-- [x] Launch no login (`SMAppService`)
-- [x] Notarização (Developer ID, fora da MAS)
-- [x] Tier 3 informativo (CoreSimulator, Application Support, Downloads) — só leitura
-- [x] Default para Lixeira (permanente como opção)
-- [x] Notificação quando o disco cair abaixo de X%
-- [x] Ícone próprio
