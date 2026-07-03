@@ -6,7 +6,7 @@
 #   ASC_KEY_ID     App Store Connect API Key ID          (obrigatório)
 #   ASC_ISSUER_ID  App Store Connect API Issuer ID (UUID)(obrigatório)
 #   ASC_KEY_PATH   Caminho do .p8                        (default: ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8)
-#   SIGN_ID        Identidade Developer ID Application   (default: Carlos … REDACTED)
+#   SIGN_ID        Identidade Developer ID Application   (obrigatório via env)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -17,7 +17,8 @@ ZIP="Harbofly.zip"
 : "${ASC_KEY_ID:?Set ASC_KEY_ID (App Store Connect API Key ID)}"
 : "${ASC_ISSUER_ID:?Set ASC_ISSUER_ID (App Store Connect API Issuer ID / UUID)}"
 ASC_KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
-export SIGN_ID="${SIGN_ID:-Developer ID Application: REDACTED (REDACTED)}"
+: "${SIGN_ID:?Set SIGN_ID (ex.: 'Developer ID Application: <Seu Nome> (<TeamID>)')}"
+export SIGN_ID
 
 [ -f "$ASC_KEY_PATH" ] || { echo "ERRO: API key não encontrada: $ASC_KEY_PATH"; exit 1; }
 
