@@ -64,9 +64,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Idempotente: cria a release ou, se já existir (re-run), substitui o asset.
           gh release create "${{ github.ref_name }}" Harbofly.dmg \
             --title "${{ github.ref_name }}" \
-            --generate-notes
+            --generate-notes \
+          || gh release upload "${{ github.ref_name }}" Harbofly.dmg --clobber
 
       # Assina o DMG com a chave EdDSA e (re)gera o appcast.xml, apontando o
       # enclosure pro asset da Release recém-criada. Commita de volta na main —
@@ -85,13 +87,16 @@ jobs:
             --ed-key-file "$RUNNER_TEMP/sparkle_ed_priv" \
             --download-url-prefix "https://github.com/carloshpdoc/Harbofly/releases/download/${TAG}/" \
             dist/
-          cp dist/appcast.xml appcast.xml
           rm -f "$RUNNER_TEMP/sparkle_ed_priv"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # O checkout está no commit da TAG (destacado); commita no topo atual da main
+          # pra não sobrescrever commits mais novos e ser seguro em re-run.
+          git fetch origin main
+          git checkout -B main origin/main
+          cp dist/appcast.xml appcast.xml
           git add appcast.xml
-          git commit -m "appcast: ${TAG}" || echo "sem mudança no appcast"
-          git push origin HEAD:main
+          if git commit -m "appcast: ${TAG}"; then git push origin main; else echo "appcast sem mudança"; fi
 
       - name: Bump automático do cask no tap
         env:
@@ -107,5 +112,4 @@ jobs:
           sed -i '' -E "s/^  sha256 \"[0-9a-f]{64}\"/  sha256 \"${SHA}\"/" Casks/harbofly.rb
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "cask: harbofly ${VER}"
-          git push
+          if git commit -am "cask: harbofly ${VER}"; then git push; else echo "cask já em ${VER}"; fi
