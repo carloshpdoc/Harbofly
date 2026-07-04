@@ -38,6 +38,8 @@ enum Prefs {
     static let analyticsEnabled = "analyticsEnabled"
     static let firstLaunchSent = "analyticsFirstLaunchSent"
     static let firstScanSent = "analyticsFirstScanSent"
+    // Idioma da UI: "system" (default), "pt" ou "en" (ver Localization.swift).
+    static let language = "language"
 }
 
 // MARK: - Model
@@ -196,7 +198,7 @@ final class DiskScanner: ObservableObject {
                         out.append(CleanTarget(
                             url: item,
                             label: "\(project)/\(item.lastPathComponent)",
-                            detail: "Artifact de build — regenera no próximo build",
+                            detail: L10n.devArtifact,
                             tier: .safe,
                             bytes: b
                         ))
@@ -216,15 +218,15 @@ final class DiskScanner: ObservableObject {
     private func scanLibrary() -> [CleanTarget] {
         let lib = home.appendingPathComponent("Library")
         let specs: [(String, Tier, String)] = [
-            ("Developer/Xcode/DerivedData", .safe, "Intermediários de build do Xcode"),
-            ("Developer/Xcode/iOS DeviceSupport", .caution, "Símbolos de devices — recria ao conectar iPhone"),
-            ("Developer/XcodeBuildMCP/workspaces", .safe, "Workspaces do XcodeBuildMCP"),
-            ("Caches/org.swift.swiftpm", .safe, "Cache do Swift Package Manager"),
-            ("Caches/Homebrew", .safe, "Downloads do Homebrew"),
-            ("Caches/Yarn", .safe, "Cache do Yarn"),
-            ("Caches/ms-playwright", .caution, "Browsers baixados pelo Playwright"),
-            ("Caches/pip", .safe, "Cache do pip"),
-            ("Caches/Google", .caution, "Cache do Google/Chrome"),
+            ("Developer/Xcode/DerivedData", .safe, L10n.xcodeDerived),
+            ("Developer/Xcode/iOS DeviceSupport", .caution, L10n.iosDeviceSupport),
+            ("Developer/XcodeBuildMCP/workspaces", .safe, L10n.xcodeBuildMCP),
+            ("Caches/org.swift.swiftpm", .safe, L10n.swiftpmCache),
+            ("Caches/Homebrew", .safe, L10n.homebrewCache),
+            ("Caches/Yarn", .safe, L10n.yarnCache),
+            ("Caches/ms-playwright", .caution, L10n.playwrightCache),
+            ("Caches/pip", .safe, L10n.pipCache),
+            ("Caches/Google", .caution, L10n.googleCache),
         ]
         var out: [CleanTarget] = []
         for (rel, tier, detail) in specs {
@@ -242,12 +244,9 @@ final class DiskScanner: ObservableObject {
     /// mostra pra você saber onde o espaço está e agir manualmente.
     private func scanInfo() -> [CleanTarget] {
         let specs: [(String, String, String)] = [
-            ("Library/Developer/CoreSimulator", "CoreSimulator",
-             "Simuladores do Xcode — apague devices velhos pelo Xcode ou `xcrun simctl delete unavailable`"),
-            ("Library/Application Support", "Application Support",
-             "Dados de apps instalados — revise pelo Finder, não apague às cegas"),
-            ("Downloads", "Downloads",
-             "Sua pasta de downloads — revise e limpe manualmente pelo Finder"),
+            ("Library/Developer/CoreSimulator", "CoreSimulator", L10n.coreSimulatorDetail),
+            ("Library/Application Support", "Application Support", L10n.appSupportDetail),
+            ("Downloads", "Downloads", L10n.downloadsDetail),
         ]
         var out: [CleanTarget] = []
         for (rel, label, detail) in specs {
@@ -278,8 +277,8 @@ final class DiskScanner: ObservableObject {
         guard notifyEnabled, below, !wasBelowThreshold else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "\(AppInfo.name): disco quase cheio"
-        content.body = "Só \(Int(ratio * 100))% livre (\(fmt(freeBytes))). Abra o \(AppInfo.name) pra liberar espaço."
+        content.title = L10n.lowSpaceTitle
+        content.body = L10n.lowSpaceBody(pct: Int(ratio * 100), free: fmt(freeBytes))
         content.sound = .default
         let req = UNNotificationRequest(identifier: "harbofly.lowspace", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(req)
@@ -309,6 +308,9 @@ struct ContentView: View {
     @AppStorage(Prefs.donateSnoozeCount) private var donateSnoozeCount = 0
     @AppStorage(Prefs.analyticsChoiceMade) private var analyticsChoiceMade = false
     @AppStorage(Prefs.analyticsEnabled) private var analyticsEnabled = false
+    // Observa a troca manual de idioma: ao mudar, a View re-renderiza e o L10n
+    // (computado) já devolve as strings no idioma novo.
+    @AppStorage(Prefs.language) private var language = "system"
 
     /// Só pede doação se a pessoa nunca apoiou e o snooze já venceu.
     private var shouldAskDonate: Bool {
@@ -423,9 +425,9 @@ struct ContentView: View {
             str.draw(in: NSRect(x: 0, y: y - h / 2, width: size.width, height: h), withAttributes: attr)
         }
 
-        draw("Recuperei", font: .systemFont(ofSize: 60, weight: .semibold), color: muted, y: 470)
+        draw(L10n.shareCardVerb, font: .systemFont(ofSize: 60, weight: .semibold), color: muted, y: 470)
         draw(fmt(freed), font: .systemFont(ofSize: 150, weight: .heavy), color: teal, y: 350)
-        draw("de espaço no meu Mac com o Harbofly 🗑️", font: .systemFont(ofSize: 44, weight: .medium), color: ink, y: 190)
+        draw(L10n.shareCardTail, font: .systemFont(ofSize: 44, weight: .medium), color: ink, y: 190)
         draw("harbofly.app", font: .monospacedSystemFont(ofSize: 34, weight: .regular), color: muted, y: 95)
 
         img.unlockFocus()
@@ -434,7 +436,7 @@ struct ContentView: View {
 
     private func shareAchievement() {
         let image = makeShareImage(freed: scanner.lastFreedBytes)
-        let text = "Recuperei \(fmt(scanner.lastFreedBytes)) de espaço no meu Mac com o Harbofly 🗑️ https://harbofly.app"
+        let text = L10n.shareText(fmt(scanner.lastFreedBytes))
         let picker = NSSharingServicePicker(items: [image, text])
         if let view = NSApp.keyWindow?.contentView {
             picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
@@ -460,12 +462,12 @@ struct ContentView: View {
             VStack(spacing: 14) {
                 Image(systemName: "chart.bar.xaxis")
                     .font(.system(size: 40)).foregroundStyle(.tint)
-                Text("Ajude a melhorar o \(AppInfo.name)")
+                Text(L10n.analyticsTitle)
                     .font(.headline).multilineTextAlignment(.center)
-                Text("Compartilhar dados de uso anônimos.")
+                Text(L10n.analyticsSubtitle)
                     .font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Text("Só eventos e métricas agregadas. Nunca nomes, arquivos, caminhos ou IP.")
+                Text(L10n.analyticsDetail)
                     .font(.caption).foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -475,7 +477,7 @@ struct ContentView: View {
                     analyticsEnabled = true
                     analyticsChoiceMade = true
                 } label: {
-                    Text("Sim").frame(maxWidth: .infinity)
+                    Text(L10n.yes).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
 
@@ -484,7 +486,7 @@ struct ContentView: View {
                     analyticsEnabled = false
                     analyticsChoiceMade = true
                 } label: {
-                    Text("Não").frame(maxWidth: .infinity)
+                    Text(L10n.no).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
             }
@@ -494,19 +496,17 @@ struct ContentView: View {
     private var confirmOverlay: some View {
         overlayCard {
             VStack(spacing: 14) {
-                Text("Excluir \(selectedTargets.count) item(ns) — \(fmt(selectedBytes))?")
+                Text(L10n.confirmTitle(count: selectedTargets.count, size: fmt(selectedBytes)))
                     .font(.headline).multilineTextAlignment(.center)
 
                 Picker("", selection: $deletePermanently) {
-                    Text("Mover pra Lixeira").tag(false)
-                    Text("Excluir de vez").tag(true)
+                    Text(L10n.moveToTrash).tag(false)
+                    Text(L10n.deleteForever).tag(true)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
 
-                Text(deletePermanently
-                     ? "Exclusão permanente: libera o espaço na hora, sem passar pela Lixeira. Não dá pra desfazer."
-                     : "Vai pra Lixeira: dá pra recuperar, mas o espaço só é liberado ao esvaziar a Lixeira.")
+                Text(deletePermanently ? L10n.permanentExplainer : L10n.trashExplainer)
                     .font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -518,11 +518,11 @@ struct ContentView: View {
                     confirming = false
                     scanner.delete(items, permanently: perm)
                 } label: {
-                    Text(deletePermanently ? "Excluir permanentemente" : "Mover pra Lixeira")
+                    Text(deletePermanently ? L10n.deletePermanentlyBtn : L10n.moveToTrash)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent).tint(deletePermanently ? .red : .accentColor)
-                Button("Cancelar") { confirming = false }
+                Button(L10n.cancel) { confirming = false }
                     .buttonStyle(.bordered)
             }
         }
@@ -536,9 +536,9 @@ struct ContentView: View {
                 Text(freed > 0 ? "🎉" : "☕").font(.system(size: 44))
                 Text(freed > 0
                      ? (scanner.lastDeletePermanent
-                        ? "Você recuperou \(fmt(freed))!"
-                        : "\(fmt(freed)) mandados pra Lixeira!")
-                     : "Obrigado! 💙")
+                        ? L10n.recovered(fmt(freed))
+                        : L10n.trashed(fmt(freed)))
+                     : L10n.thanks)
                     .font(.title3.bold())
                     .multilineTextAlignment(.center)
 
@@ -547,14 +547,14 @@ struct ContentView: View {
                     Button {
                         shareAchievement()
                     } label: {
-                        Label("Compartilhar", systemImage: "square.and.arrow.up")
+                        Label(L10n.share, systemImage: "square.and.arrow.up")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                 }
 
                 if askDonate {
-                    Text("\(AppInfo.name) é grátis. Se te ajudou, me paga um café (R$2) pra apoiar o projeto 💙")
+                    Text(L10n.donateAsk)
                         .font(.callout)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
@@ -563,7 +563,7 @@ struct ContentView: View {
                     Button {
                         copyPix()
                     } label: {
-                        Label(pixCopied ? "Chave PIX copiada!" : "Copiar chave PIX (R$2)",
+                        Label(pixCopied ? L10n.pixCopied : L10n.copyPix,
                               systemImage: pixCopied ? "checkmark.circle.fill" : "doc.on.doc")
                             .frame(maxWidth: .infinity)
                     }
@@ -580,14 +580,14 @@ struct ContentView: View {
                     }
 
                     HStack {
-                        Button("Já apoiei ❤️") { hasSupported = true; showSupport = false; manualSupport = false }
+                        Button(L10n.alreadySupported) { hasSupported = true; showSupport = false; manualSupport = false }
                             .buttonStyle(.plain).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Agora não") { snoozeDonate() }
+                        Button(L10n.notNow) { snoozeDonate() }
                             .buttonStyle(.plain).foregroundStyle(.secondary)
                     }
                 } else {
-                    Button("Fechar") { showSupport = false }
+                    Button(L10n.close) { showSupport = false }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                 }
@@ -606,15 +606,15 @@ struct ContentView: View {
                     Image(systemName: "macwindow")
                 }
                 .buttonStyle(.plain)
-                .help("Abrir em janela")
+                .help(L10n.openInWindow)
             }
             ProgressView(value: 1 - freeRatio)
                 .tint(freeRatio < 0.1 ? .red : (freeRatio < 0.2 ? .orange : .accentColor))
             HStack {
-                Text("\(fmt(scanner.freeBytes)) livre de \(fmt(scanner.totalBytes))")
+                Text(L10n.freeOfTotal(free: fmt(scanner.freeBytes), total: fmt(scanner.totalBytes)))
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text("Recuperável: \(fmt(reclaimable))")
+                Text(L10n.reclaimable(fmt(reclaimable)))
                     .font(.caption).bold()
                     .foregroundStyle(reclaimable > 0 ? .green : .secondary)
             }
@@ -624,22 +624,22 @@ struct ContentView: View {
     private var listSection: some View {
         Group {
             if scanner.targets.isEmpty {
-                Text(scanner.scanning ? "Escaneando…" : "Nada relevante encontrado 🎉")
+                Text(scanner.scanning ? L10n.scanning : L10n.nothingFound)
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
                         if !safeTargets.isEmpty {
-                            tierHeader("🟢 Seguro — regenera sozinho", safeTargets)
+                            tierHeader(L10n.tierSafe, safeTargets)
                             ForEach(safeTargets) { row($0) }
                         }
                         if !cautionTargets.isEmpty {
-                            tierHeader("🟡 Cuidado — recria, mas custa", cautionTargets)
+                            tierHeader(L10n.tierCaution, cautionTargets)
                             ForEach(cautionTargets) { row($0) }
                         }
                         if !infoTargets.isEmpty {
-                            tierHeader("🔵 Informativo — só pra você saber (o app não apaga)", infoTargets)
+                            tierHeader(L10n.tierInfo, infoTargets)
                             ForEach(infoTargets) { infoRow($0) }
                         }
                     }
@@ -708,7 +708,7 @@ struct ContentView: View {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([t.url])
                 } label: {
-                    Label("Revelar no Finder", systemImage: "magnifyingglass").font(.caption)
+                    Label(L10n.revealInFinder, systemImage: "magnifyingglass").font(.caption)
                 }
                 .buttonStyle(.plain).foregroundStyle(.blue).padding(.top, 2)
             }
@@ -721,10 +721,10 @@ struct ContentView: View {
     private var footer: some View {
         VStack(spacing: 8) {
             HStack {
-                Button("Selecionar seguros") {
+                Button(L10n.selectSafe) {
                     selection = Set(scanner.targets.filter { $0.tier == .safe }.map { $0.id })
                 }
-                Button("Limpar seleção") { selection.removeAll() }
+                Button(L10n.clearSelection) { selection.removeAll() }
                     .disabled(selection.isEmpty)
                 Spacer()
                 Button {
@@ -732,27 +732,27 @@ struct ContentView: View {
                                             itemCount: selection.count)
                     confirming = true
                 } label: {
-                    Text(selection.isEmpty ? "Excluir" : "Excluir (\(fmt(selectedBytes)))")
+                    Text(selection.isEmpty ? L10n.delete : L10n.deleteWithSize(fmt(selectedBytes)))
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 .disabled(selection.isEmpty)
             }
             HStack {
-                Button("Rescan") { scanner.scan() }.disabled(scanner.scanning)
+                Button(L10n.rescan) { scanner.scan() }.disabled(scanner.scanning)
                 if let d = scanner.lastScan {
-                    Text("Atualizado \(d.formatted(date: .omitted, time: .shortened))")
+                    Text(L10n.updatedAt(d.formatted(date: .omitted, time: .shortened)))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text("v\(AppInfo.version)")
                     .font(.caption2).foregroundStyle(.tertiary)
                     .help("Build \(AppInfo.build)")
-                Button("Sair") { NSApp.terminate(nil) }
+                Button(L10n.quit) { NSApp.terminate(nil) }
             }
             Divider()
             HStack(spacing: 6) {
-                Toggle("Avisar quando o disco livre cair abaixo de", isOn: $notifyEnabled)
+                Toggle(L10n.notifyBelow, isOn: $notifyEnabled)
                     .toggleStyle(.checkbox)
                 Picker("", selection: $notifyThreshold) {
                     Text("5%").tag(0.05)
@@ -766,7 +766,7 @@ struct ContentView: View {
                 Spacer()
             }
             HStack {
-                Toggle("Compartilhar dados de uso anônimos", isOn: Binding(
+                Toggle(L10n.shareAnonToggle, isOn: Binding(
                     get: { analyticsEnabled },
                     set: { on in
                         if on { Analytics.optIn() } else { Analytics.optOut() }
@@ -776,18 +776,30 @@ struct ContentView: View {
                 .toggleStyle(.checkbox)
                 Spacer()
             }
+            HStack {
+                Text(L10n.languageLabel)
+                Picker("", selection: $language) {
+                    Text(L10n.langSystem).tag("system")
+                    Text("Português").tag("pt")
+                    Text("English").tag("en")
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                Spacer()
+            }
             if updater.isAvailable {
                 HStack {
-                    Toggle("Buscar atualizações automaticamente",
+                    Toggle(L10n.autoUpdateToggle,
                            isOn: Binding(get: { updater.autoCheck }, set: { updater.setAuto($0) }))
                         .toggleStyle(.checkbox)
                     Spacer()
-                    Button("Buscar agora") { updater.check() }
+                    Button(L10n.checkNow) { updater.check() }
                         .buttonStyle(.plain).foregroundStyle(.blue)
                 }
             }
             HStack {
-                Toggle("Abrir no login", isOn: $launchAtLogin)
+                Toggle(L10n.openAtLogin, isOn: $launchAtLogin)
                     .toggleStyle(.checkbox)
                     .onChange(of: launchAtLogin) { _, on in setLoginItem(on) }
                 Spacer()
@@ -797,7 +809,7 @@ struct ContentView: View {
                     manualSupport = true
                     showSupport = true
                 } label: {
-                    Label("Apoiar ☕", systemImage: "heart").font(.caption)
+                    Label(L10n.supportCta, systemImage: "heart").font(.caption)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.pink)
@@ -861,8 +873,7 @@ struct HarboflyApp: App {
 
         Window(AppInfo.name, id: "main") {
             ContentView(scanner: scanner, updater: updater)
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(minHeight: 620)
+                .fixedSize()
         }
         .windowResizability(.contentSize)
     }
