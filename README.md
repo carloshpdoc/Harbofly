@@ -8,7 +8,7 @@ A macOS menu-bar app that **finds on its own** what's eating your disk and lets 
 
 It was born from a real pain: an iOS/Android dev Mac piles up tens of GB of build artifacts and caches (`build/`, `.build/`, `node_modules/`, `DerivedData`, SPM/Homebrew/Yarn/pip caches…) that nobody remembers to clean. Harbofly scans those places automatically, shows how much you can recover, and groups everything by risk level, and, by default, **sends it all to the Trash** (so you can restore it).
 
-Free · Open source · Apple-notarized · Zero telemetry.
+Free · Open source · Apple-notarized · Privacy-first (opt-in, anonymous analytics).
 
 ## Install
 
@@ -39,7 +39,7 @@ Or download the notarized `.dmg` at **[harbofly.app](https://harbofly.app)**.
 Since it's a tool that deletes files, it's built to be trustworthy:
 
 - **Default = Trash** (restorable); nothing risky is pre-selected; confirmation before any deletion.
-- **Open source end to end**: you can audit that it collects nothing, never tracks you, and does no telemetry (the only network is the optional update check).
+- **Open source end to end**: you can audit exactly what leaves your machine. Analytics is **opt-in and off by default** (via [TelemetryDeck](https://telemetrydeck.com)); when on, it sends only anonymous, aggregate usage stats (events, GB recovered, cache categories) — never your email, IP, name, paths, or project names. Toggle it anytime in preferences.
 - **Signed with a Developer ID + notarized** by Apple; **build provenance (SLSA)** on every release, verifiable with `gh attestation verify Harbofly.dmg --repo carloshpdoc/Harbofly`.
 
 ## What it scans

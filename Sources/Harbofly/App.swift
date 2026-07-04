@@ -33,6 +33,11 @@ enum Prefs {
     static let donateSnoozeCount = "donateSnoozeCount"
     /// Dias de snooze por vez que o usuário clica "agora não" (crescente).
     static let snoozeDays: [Double] = [7, 30, 90, 180]
+    // Analytics opt-in (ver Analytics.swift).
+    static let analyticsChoiceMade = "analyticsChoiceMade"
+    static let analyticsEnabled = "analyticsEnabled"
+    static let firstLaunchSent = "analyticsFirstLaunchSent"
+    static let firstScanSent = "analyticsFirstScanSent"
 }
 
 // MARK: - Model
@@ -83,6 +88,7 @@ final class DiskScanner: ObservableObject {
     func scan() {
         guard !scanning else { return }
         scanning = true
+        let startedAt = Date()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             let (free, total) = self.diskSpace()
@@ -95,6 +101,9 @@ final class DiskScanner: ObservableObject {
                 self.lastScan = Date()
                 self.scanning = false
                 self.checkLowSpaceNotification()
+                let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
+                let recoverable = found.filter { !$0.tier.isReadOnly }.reduce(Int64(0)) { $0 + $1.bytes }
+                Analytics.scanFinished(durationMs: ms, itemCount: found.count, recoverableBytes: recoverable)
             }
         }
     }
@@ -107,17 +116,29 @@ final class DiskScanner: ObservableObject {
         let deletable = items.filter { !$0.tier.isReadOnly }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var freed: Int64 = 0
+            var count = 0
+            // Bytes liberados por tipo genérico de cache (nunca o caminho/nome real).
+            var byCategory: [String: Int64] = [:]
             for item in deletable {
+                let ok: Bool
                 if permanently {
-                    if (try? FileManager.default.removeItem(at: item.url)) != nil { freed += item.bytes }
+                    ok = (try? FileManager.default.removeItem(at: item.url)) != nil
                 } else {
-                    if (try? FileManager.default.trashItem(at: item.url, resultingItemURL: nil)) != nil { freed += item.bytes }
+                    ok = (try? FileManager.default.trashItem(at: item.url, resultingItemURL: nil)) != nil
+                }
+                if ok {
+                    freed += item.bytes
+                    count += 1
+                    byCategory[item.url.lastPathComponent, default: 0] += item.bytes
                 }
             }
+            let freedFinal = freed, countFinal = count, categories = byCategory
             DispatchQueue.main.async {
-                self?.lastFreedBytes = freed
+                self?.lastFreedBytes = freedFinal
                 self?.lastDeletePermanent = permanently
                 self?.justCleaned = true
+                Analytics.deleteConfirmed(mode: permanently ? "permanent" : "trash",
+                                          freedBytes: freedFinal, itemCount: countFinal, byCategory: categories)
                 self?.scan()
             }
         }
@@ -286,6 +307,8 @@ struct ContentView: View {
     @AppStorage(Prefs.hasSupported) private var hasSupported = false
     @AppStorage(Prefs.donateSnoozeUntil) private var donateSnoozeUntil = 0.0
     @AppStorage(Prefs.donateSnoozeCount) private var donateSnoozeCount = 0
+    @AppStorage(Prefs.analyticsChoiceMade) private var analyticsChoiceMade = false
+    @AppStorage(Prefs.analyticsEnabled) private var analyticsEnabled = false
 
     /// Só pede doação se a pessoa nunca apoiou e o snooze já venceu.
     private var shouldAskDonate: Bool {
@@ -320,9 +343,10 @@ struct ContentView: View {
                 footer
             }
             .padding(12)
-            .disabled(confirming || showSupport)
+            .disabled(confirming || showSupport || !analyticsChoiceMade)
 
-            if confirming { confirmOverlay }
+            if !analyticsChoiceMade { analyticsOptInOverlay }
+            else if confirming { confirmOverlay }
             if showSupport { supportOverlay }
         }
         .frame(width: 470)
@@ -427,6 +451,43 @@ struct ContentView: View {
                 .frame(width: 320)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                 .shadow(radius: 24)
+        }
+    }
+
+    /// First launch: pergunta de consentimento no estilo Apple.
+    private var analyticsOptInOverlay: some View {
+        overlayCard {
+            VStack(spacing: 14) {
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.system(size: 40)).foregroundStyle(.tint)
+                Text("Ajude a melhorar o \(AppInfo.name)")
+                    .font(.headline).multilineTextAlignment(.center)
+                Text("Compartilhar dados de uso anônimos.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Text("Só eventos e métricas agregadas. Nunca nomes, arquivos, caminhos ou IP.")
+                    .font(.caption).foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    Analytics.optIn()
+                    analyticsEnabled = true
+                    analyticsChoiceMade = true
+                } label: {
+                    Text("Sim").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    Analytics.optOut()
+                    analyticsEnabled = false
+                    analyticsChoiceMade = true
+                } label: {
+                    Text("Não").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
         }
     }
 
@@ -667,6 +728,8 @@ struct ContentView: View {
                     .disabled(selection.isEmpty)
                 Spacer()
                 Button {
+                    Analytics.deleteClicked(mode: deletePermanently ? "permanent" : "trash",
+                                            itemCount: selection.count)
                     confirming = true
                 } label: {
                     Text(selection.isEmpty ? "Excluir" : "Excluir (\(fmt(selectedBytes)))")
@@ -700,6 +763,17 @@ struct ContentView: View {
                 .labelsHidden()
                 .frame(width: 66)
                 .disabled(!notifyEnabled)
+                Spacer()
+            }
+            HStack {
+                Toggle("Compartilhar dados de uso anônimos", isOn: Binding(
+                    get: { analyticsEnabled },
+                    set: { on in
+                        if on { Analytics.optIn() } else { Analytics.optOut() }
+                        analyticsEnabled = on
+                    }
+                ))
+                .toggleStyle(.checkbox)
                 Spacer()
             }
             if updater.isAvailable {
@@ -767,6 +841,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu bar only, sem dock
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        Analytics.bootstrapIfConsented()
     }
 }
 

@@ -8,7 +8,7 @@ App de barra de menu pro macOS que **descobre sozinho** o que está ocupando seu
 
 Nasceu de uma dor real: um Mac de dev iOS/Android acumula dezenas de GB em build artifacts e caches (`build/`, `.build/`, `node_modules/`, `DerivedData`, caches de SPM/Homebrew/Yarn/pip…) que ninguém lembra de limpar. O Harbofly varre esses lugares automaticamente, mostra quanto dá pra recuperar e organiza por nível de risco, e, por padrão, **manda tudo pra Lixeira** (dá pra restaurar).
 
-Grátis · Open source · Notarizado pela Apple · Zero telemetria.
+Grátis · Open source · Notarizado pela Apple · Foco em privacidade (analytics anônimo, opt-in).
 
 ## Instalação
 
@@ -39,7 +39,7 @@ Ou baixe o `.dmg` notarizado em **[harbofly.app](https://harbofly.app)**.
 Como é uma ferramenta que apaga arquivo, ela foi feita pra ser confiável:
 
 - **Padrão = Lixeira** (restaurável); nada perigoso vem pré-selecionado; confirmação antes de qualquer exclusão.
-- **Open source de ponta a ponta**: dá pra auditar que não coleta nada, não te rastreia e não faz telemetria (a única rede é a checagem de update, opcional).
+- **Open source de ponta a ponta**: dá pra auditar exatamente o que sai da sua máquina. O analytics é **opt-in e desligado por padrão** (via [TelemetryDeck](https://telemetrydeck.com)); quando ligado, envia só estatísticas de uso anônimas e agregadas (eventos, GB recuperados, categorias de cache) — nunca e-mail, IP, nome, caminhos ou nomes de projeto. Dá pra ligar/desligar quando quiser nas preferências.
 - **Assinado com Developer ID + notarizado** pela Apple; **build provenance (SLSA)** em cada release, verificável com `gh attestation verify Harbofly.dmg --repo carloshpdoc/Harbofly`.
 
 ## O que ele varre
