@@ -51,7 +51,7 @@ if [ -n "${SU_PUBLIC_ED_KEY:-}" ]; then
     SU_KEYS="    <key>SUFeedURL</key><string>${SU_FEED_URL}</string>
     <key>SUPublicEDKey</key><string>${SU_PUBLIC_ED_KEY}</string>
     <key>SUEnableAutomaticChecks</key><true/>
-    <key>SUScheduledCheckInterval</key><integer>86400</integer>"
+    <key>SUScheduledCheckInterval</key><integer>28800</integer>"
 else
     echo "AVISO: SU_PUBLIC_ED_KEY não setado — Sparkle fica inerte (sem auto-update)."
 fi
