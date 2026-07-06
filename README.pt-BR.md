@@ -1,14 +1,20 @@
 # Harbofly
 
+[![Featured on Awesome Mac](https://awesome.re/mentioned-badge.svg)](https://github.com/jaywcjlove/awesome-mac)
+
 🇧🇷 Português · [🇺🇸 English](README.md)
 
-> **Entenda seu armazenamento. Recupere espaço com segurança.** → [harbofly.app](https://harbofly.app)
+> **A limpeza de disco feita pra quem programa.** Recupere 20-100 GB de Xcode, Docker, node_modules e caches de build, com segurança. → [harbofly.app](https://harbofly.app)
 
 App de barra de menu pro macOS que **descobre sozinho** o que está ocupando seu disco e deixa você limpar com um clique, sem configurar path nenhum.
 
 Nasceu de uma dor real: um Mac de dev iOS/Android acumula dezenas de GB em build artifacts e caches (`build/`, `.build/`, `node_modules/`, `DerivedData`, caches de SPM/Homebrew/Yarn/pip…) que ninguém lembra de limpar. O Harbofly varre esses lugares automaticamente, mostra quanto dá pra recuperar e organiza por nível de risco, e, por padrão, **manda tudo pra Lixeira** (dá pra restaurar).
 
 Grátis · Open source · Notarizado pela Apple · Foco em privacidade (analytics anônimo, opt-in).
+
+## Featured
+
+Listado no **[Awesome Mac](https://github.com/jaywcjlove/awesome-mac)**, o diretório curado dos melhores apps de macOS, e compartilhado pelo mantenedor [@jaywcjlove](https://twitter.com/jaywcjlove). Descrito por lá como *"um app de barra de menu que descobre sozinho e libera o espaço que artefatos e caches de build de dev ocupam."*
 
 ## Instalação
 
