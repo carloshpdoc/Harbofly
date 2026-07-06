@@ -48,6 +48,11 @@ struct L {
     var coreSimulatorDetail: String { s("Simuladores do Xcode: apague devices velhos pelo Xcode ou `xcrun simctl delete unavailable`", "Xcode simulators: delete old devices in Xcode or `xcrun simctl delete unavailable`") }
     var appSupportDetail: String { s("Dados de apps instalados: revise pelo Finder, não apague às cegas", "Installed app data: review in Finder, don't delete blindly") }
     var downloadsDetail: String { s("Sua pasta de downloads: revise e limpe manualmente pelo Finder", "Your downloads folder: review and clean manually in Finder") }
+    var dockerLabel: String { s("Docker (não usado)", "Docker (unused)") }
+    var dockerDetail: String { s("Imagens, containers e build cache do Docker sem uso. Prune irreversível, não passa pela Lixeira.", "Unused Docker images, containers and build cache. Prune is irreversible, it does not go through the Trash.") }
+    var dockerStoppedLabel: String { s("Docker (engine desligado)", "Docker (engine off)") }
+    var dockerStoppedDetail: String { s("Disk image do Docker. Ligue o engine pra ver e recuperar o espaço não usado.", "Docker disk image. Start the engine to see and reclaim unused space.") }
+    var dockerPruneNote: String { s("O Docker é limpo via prune (irreversível), independente da opção acima.", "Docker is cleaned via prune (irreversible), regardless of the option above.") }
 
     // MARK: notificação de disco baixo
     var lowSpaceTitle: String { s("\(AppInfo.name): disco quase cheio", "\(AppInfo.name): disk almost full") }

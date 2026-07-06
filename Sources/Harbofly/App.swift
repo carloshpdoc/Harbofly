@@ -60,6 +60,8 @@ struct CleanTarget: Identifiable {
     let detail: String
     let tier: Tier
     var bytes: Int64
+    /// Alvo do Docker: a ação é `docker system prune` (irreversível), não Lixeira.
+    var isDocker = false
 }
 
 func fmt(_ bytes: Int64) -> String {
@@ -94,7 +96,7 @@ final class DiskScanner: ObservableObject {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             let (free, total) = self.diskSpace()
-            var found = self.scanDevelopment() + self.scanLibrary() + self.scanInfo()
+            var found = self.scanDevelopment() + self.scanLibrary() + self.scanInfo() + self.scanDocker()
             found.sort { $0.bytes > $1.bytes }
             DispatchQueue.main.async {
                 self.freeBytes = free
@@ -123,7 +125,11 @@ final class DiskScanner: ObservableObject {
             var byCategory: [String: Int64] = [:]
             for item in deletable {
                 let ok: Bool
-                if permanently {
+                if item.isDocker {
+                    // Docker não vai pra Lixeira: sempre prune (irreversível),
+                    // independente do toggle permanente/Lixeira.
+                    ok = DockerEngine.prune()
+                } else if permanently {
                     ok = (try? FileManager.default.removeItem(at: item.url)) != nil
                 } else {
                     ok = (try? FileManager.default.trashItem(at: item.url, resultingItemURL: nil)) != nil
@@ -131,7 +137,8 @@ final class DiskScanner: ObservableObject {
                 if ok {
                     freed += item.bytes
                     count += 1
-                    byCategory[item.url.lastPathComponent, default: 0] += item.bytes
+                    let key = item.isDocker ? "docker" : item.url.lastPathComponent
+                    byCategory[key, default: 0] += item.bytes
                 }
             }
             let freedFinal = freed, countFinal = count, categories = byCategory
@@ -258,6 +265,24 @@ final class DiskScanner: ObservableObject {
             }
         }
         return out
+    }
+
+    /// Docker/OrbStack: mede o recuperável real via engine (não o disk image).
+    /// Tier caution porque prune é irreversível e não passa pela Lixeira.
+    private func scanDocker() -> [CleanTarget] {
+        switch DockerEngine.probe() {
+        case .absent:
+            return []
+        case .running(let reclaimable, let image):
+            guard reclaimable > minBytes else { return [] }
+            let url = image ?? DockerEngine.binary() ?? home
+            return [CleanTarget(url: url, label: L10n.dockerLabel, detail: L10n.dockerDetail,
+                                tier: .caution, bytes: reclaimable, isDocker: true)]
+        case .stopped(let bytes, let image):
+            guard bytes > minBytes, let image = image else { return [] }
+            return [CleanTarget(url: image, label: L10n.dockerStoppedLabel,
+                                detail: L10n.dockerStoppedDetail, tier: .info, bytes: bytes)]
+        }
     }
 
     // MARK: notificação de disco baixo
@@ -511,6 +536,13 @@ struct ContentView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
 
+                if selectedTargets.contains(where: { $0.isDocker }) {
+                    Text(L10n.dockerPruneNote)
+                        .font(.callout).foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 Button(role: .destructive) {
                     let items = selectedTargets
                     let perm = deletePermanently
@@ -745,7 +777,7 @@ struct ContentView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("v\(AppInfo.version)")
+                Text("v\(AppInfo.version) (\(AppInfo.build))")
                     .font(.caption2).foregroundStyle(.tertiary)
                     .help("Build \(AppInfo.build)")
                 Button(L10n.quit) { NSApp.terminate(nil) }
