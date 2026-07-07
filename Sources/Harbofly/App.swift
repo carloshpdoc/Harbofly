@@ -9,6 +9,8 @@ import Sparkle
 /// Nome de exibição do app. Trocar aqui reflete na UI inteira.
 enum AppInfo {
     static let name = "Harbofly"
+    /// id da Window scene principal (usado também pra reconhecer a NSWindow).
+    static let mainWindowID = "main"
     // Lê do próprio bundle (setado pelo make-app.sh). "dev" quando roda via `swift run`.
     static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev" }
     static var build: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0" }
@@ -392,9 +394,7 @@ struct ContentView: View {
 
     // Abre a janela de app (dock + foco), fora da barra de menu.
     func openMainWindow() {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: "main")
+        presentMainWindow(using: openWindow)
     }
 
     private func setLoginItem(_ enabled: Bool) {
@@ -881,11 +881,83 @@ final class Updater: ObservableObject {
 
 // MARK: - App
 
+/// Ponte AppDelegate → SwiftUI: o delegate não tem acesso ao `openWindow` do
+/// environment, então ele marca o pedido aqui e a `MenuBarLabel` (view
+/// sempre-viva do status item) abre a janela.
+final class MainWindowRequester: ObservableObject {
+    static let shared = MainWindowRequester()
+    @Published var pending = false
+}
+
+/// Mostra a janela principal no desktop (com ícone no Dock e foco).
+@MainActor
+func presentMainWindow(using openWindow: OpenWindowAction) {
+    NSApp.setActivationPolicy(.regular)
+    NSApp.activate(ignoringOtherApps: true)
+    openWindow(id: AppInfo.mainWindowID)
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu bar only, sem dock
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         Analytics.bootstrapIfConsented()
+
+        // Launch manual (Finder/Launchpad/Spotlight): abre a janela no desktop,
+        // porque o ícone na barra de menu pode estar escondido/lotado.
+        // Login automático continua discreto (só barra de menu).
+        if !launchedAsLoginItem {
+            MainWindowRequester.shared.pending = true
+        }
+
+        // Quando a janela principal fecha, volta a ser só menu bar (sem Dock).
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowWillClose(_:)),
+            name: NSWindow.willCloseNotification, object: nil)
+    }
+
+    /// Usuário "abriu" o app de novo com ele já rodando: mostra a janela.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        MainWindowRequester.shared.pending = true
+        return false
+    }
+
+    @objc private func windowWillClose(_ note: Notification) {
+        guard let w = note.object as? NSWindow,
+              w.identifier?.rawValue.hasPrefix(AppInfo.mainWindowID) == true else { return }
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    /// true quando o launch veio do login item (SMAppService), não do usuário.
+    private var launchedAsLoginItem: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent else { return false }
+        return event.eventID == AEEventID(kAEOpenApplication)
+            && event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue
+                == OSType(keyAELaunchedAsLogInItem)
+    }
+}
+
+/// Ícone da barra de menu. Por ser a única view viva desde o launch, também é
+/// quem executa os pedidos de abrir a janela principal (ver MainWindowRequester).
+struct MenuBarLabel: View {
+    @ObservedObject var scanner: DiskScanner
+    @ObservedObject private var requester = MainWindowRequester.shared
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(systemName: lowSpace ? "internaldrive.fill" : "internaldrive")
+            .onAppear { openIfPending() }
+            .onChange(of: requester.pending) { _, _ in openIfPending() }
+    }
+
+    private var lowSpace: Bool {
+        scanner.totalBytes > 0 && Double(scanner.freeBytes) / Double(scanner.totalBytes) < 0.1
+    }
+
+    private func openIfPending() {
+        guard requester.pending else { return }
+        requester.pending = false
+        presentMainWindow(using: openWindow)
     }
 }
 
@@ -899,18 +971,14 @@ struct HarboflyApp: App {
         MenuBarExtra {
             ContentView(scanner: scanner, updater: updater)
         } label: {
-            Image(systemName: lowSpace ? "internaldrive.fill" : "internaldrive")
+            MenuBarLabel(scanner: scanner)
         }
         .menuBarExtraStyle(.window)
 
-        Window(AppInfo.name, id: "main") {
+        Window(AppInfo.name, id: AppInfo.mainWindowID) {
             ContentView(scanner: scanner, updater: updater)
                 .fixedSize()
         }
         .windowResizability(.contentSize)
-    }
-
-    private var lowSpace: Bool {
-        scanner.totalBytes > 0 && Double(scanner.freeBytes) / Double(scanner.totalBytes) < 0.1
     }
 }
