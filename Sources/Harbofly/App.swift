@@ -224,27 +224,55 @@ final class DiskScanner: ObservableObject {
         return out
     }
 
-    /// Alvos conhecidos de ~/Library (dev caches).
+    /// Alvos conhecidos de caches dev na home (~/Library e dotfiles).
+    /// Cobre toolchains (Xcode, Gradle, npm…), editores e ferramentas de IA
+    /// (pesos de modelo do Ollama/LM Studio/HuggingFace, que passam de
+    /// dezenas de GB fácil).
     private func scanLibrary() -> [CleanTarget] {
-        let lib = home.appendingPathComponent("Library")
-        let specs: [(String, Tier, String)] = [
-            ("Developer/Xcode/DerivedData", .safe, L10n.xcodeDerived),
-            ("Developer/Xcode/iOS DeviceSupport", .caution, L10n.iosDeviceSupport),
-            ("Developer/XcodeBuildMCP/workspaces", .safe, L10n.xcodeBuildMCP),
-            ("Caches/org.swift.swiftpm", .safe, L10n.swiftpmCache),
-            ("Caches/Homebrew", .safe, L10n.homebrewCache),
-            ("Caches/Yarn", .safe, L10n.yarnCache),
-            ("Caches/ms-playwright", .caution, L10n.playwrightCache),
-            ("Caches/pip", .safe, L10n.pipCache),
-            ("Caches/Google", .caution, L10n.googleCache),
+        let specs: [(String, String, Tier, String)] = [
+            // Xcode & Apple
+            ("Library/Developer/Xcode/DerivedData", "DerivedData", .safe, L10n.xcodeDerived),
+            ("Library/Developer/Xcode/iOS DeviceSupport", "iOS DeviceSupport", .caution, L10n.iosDeviceSupport),
+            ("Library/Developer/Xcode/Archives", "Xcode Archives", .caution, L10n.xcodeArchives),
+            ("Library/Developer/XcodeBuildMCP/workspaces", "workspaces", .safe, L10n.xcodeBuildMCP),
+            ("Library/Caches/org.swift.swiftpm", "org.swift.swiftpm", .safe, L10n.swiftpmCache),
+            ("Library/Caches/CocoaPods", "CocoaPods", .safe, L10n.pkgCache),
+            // Package managers / linguagens
+            ("Library/Caches/Homebrew", "Homebrew", .safe, L10n.homebrewCache),
+            ("Library/Caches/Yarn", "Yarn", .safe, L10n.yarnCache),
+            ("Library/Caches/pnpm", "pnpm", .safe, L10n.pkgCache),
+            (".npm", "npm", .safe, L10n.pkgCache),
+            (".bun/install/cache", "Bun", .safe, L10n.pkgCache),
+            ("Library/Caches/pip", "pip", .safe, L10n.pipCache),
+            ("Library/Caches/uv", "uv", .safe, L10n.pkgCache),
+            ("Library/Caches/go-build", "Go build", .safe, L10n.devArtifact),
+            ("go/pkg/mod", "Go modules", .caution, L10n.depsCache),
+            (".gradle/caches", "Gradle", .caution, L10n.depsCache),
+            (".m2/repository", "Maven", .caution, L10n.depsCache),
+            (".cargo/registry", "Cargo", .caution, L10n.depsCache),
+            (".pub-cache", "Flutter pub", .caution, L10n.depsCache),
+            // Editores / IDEs
+            ("Library/Application Support/Code/CachedData", "VS Code (CachedData)", .safe, L10n.editorCache),
+            ("Library/Application Support/Code/Cache", "VS Code (Cache)", .safe, L10n.editorCache),
+            ("Library/Application Support/Cursor/CachedData", "Cursor (CachedData)", .safe, L10n.editorCache),
+            ("Library/Application Support/Cursor/Cache", "Cursor (Cache)", .safe, L10n.editorCache),
+            ("Library/Caches/JetBrains", "JetBrains", .caution, L10n.jetbrainsCache),
+            // Ferramentas de IA (pesos de modelo)
+            (".ollama/models", "Ollama", .caution, L10n.aiModels),
+            (".cache/huggingface", "Hugging Face", .caution, L10n.aiModels),
+            (".lmstudio/models", "LM Studio", .caution, L10n.aiModels),
+            (".cache/lm-studio", "LM Studio (legado)", .caution, L10n.aiModels),
+            // Outros
+            ("Library/Caches/ms-playwright", "ms-playwright", .caution, L10n.playwrightCache),
+            ("Library/Caches/Google", "Google", .caution, L10n.googleCache),
         ]
         var out: [CleanTarget] = []
-        for (rel, tier, detail) in specs {
-            let url = lib.appendingPathComponent(rel)
+        for (rel, label, tier, detail) in specs {
+            let url = home.appendingPathComponent(rel)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             let b = size(of: url)
             if b > minBytes {
-                out.append(CleanTarget(url: url, label: url.lastPathComponent, detail: detail, tier: tier, bytes: b))
+                out.append(CleanTarget(url: url, label: label, detail: detail, tier: tier, bytes: b))
             }
         }
         return out
@@ -501,7 +529,7 @@ struct ContentView: View {
                     .font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                 Text(L10n.analyticsDetail)
-                    .font(.caption).foregroundStyle(.tertiary)
+                    .font(.caption).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
 
