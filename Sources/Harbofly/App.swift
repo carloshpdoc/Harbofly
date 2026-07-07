@@ -324,6 +324,12 @@ struct ContentView: View {
     @State private var launchAtLogin = false
     @State private var showSupport = false
     @State private var pixCopied = false
+    @State private var showFeedback = false
+    @State private var feedbackText = ""
+    @State private var feedbackContact = ""
+    @State private var feedbackSending = false
+    @State private var feedbackSent = false
+    @State private var feedbackFailed = false
     /// Força a seção de doação mesmo pra quem já apoiou (quando o próprio usuário
     /// clica em "Apoiar" no rodapé).
     @State private var manualSupport = false
@@ -373,11 +379,12 @@ struct ContentView: View {
                 footer
             }
             .padding(12)
-            .disabled(confirming || showSupport || !analyticsChoiceMade)
+            .disabled(confirming || showSupport || showFeedback || !analyticsChoiceMade)
 
             if !analyticsChoiceMade { analyticsOptInOverlay }
             else if confirming { confirmOverlay }
             if showSupport { supportOverlay }
+            if showFeedback { feedbackOverlay }
         }
         .frame(width: 470)
         .onAppear {
@@ -628,6 +635,89 @@ struct ContentView: View {
         }
     }
 
+    private var feedbackOverlay: some View {
+        overlayCard {
+            VStack(spacing: 14) {
+                if feedbackSent {
+                    Text("💙").font(.system(size: 44))
+                    Text(L10n.feedbackThanks)
+                        .font(.title3.bold()).multilineTextAlignment(.center)
+                    Button {
+                        closeFeedback()
+                    } label: {
+                        Text(L10n.close).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Image(systemName: "bubble.left.and.text.bubble.right")
+                        .font(.system(size: 40)).foregroundStyle(.tint)
+                    Text(L10n.feedbackTitle).font(.headline)
+                    Text(L10n.feedbackSubtitle)
+                        .font(.callout).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    TextEditor(text: $feedbackText)
+                        .font(.body)
+                        .frame(height: 90)
+                        .scrollContentBackground(.hidden)
+                        .padding(6)
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+
+                    TextField(L10n.feedbackContactPlaceholder, text: $feedbackContact)
+                        .textFieldStyle(.roundedBorder)
+
+                    Text(L10n.feedbackPrivacyNote)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    if feedbackFailed {
+                        Text(L10n.feedbackError)
+                            .font(.caption).foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    Button {
+                        sendFeedback()
+                    } label: {
+                        Text(feedbackSending ? L10n.feedbackSending : L10n.feedbackSend)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(feedbackSending
+                              || feedbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button(L10n.cancel) { closeFeedback() }
+                        .buttonStyle(.bordered)
+                        .disabled(feedbackSending)
+                }
+            }
+        }
+    }
+
+    private func sendFeedback() {
+        feedbackFailed = false
+        feedbackSending = true
+        let message = feedbackText, contact = feedbackContact
+        Task { @MainActor in
+            let ok = await Feedback.send(message: message, contact: contact)
+            feedbackSending = false
+            if ok {
+                feedbackSent = true
+                feedbackText = ""
+                feedbackContact = ""
+            } else {
+                feedbackFailed = true
+            }
+        }
+    }
+
+    private func closeFeedback() {
+        showFeedback = false
+        feedbackSent = false
+        feedbackFailed = false
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -840,6 +930,13 @@ struct ContentView: View {
                     .toggleStyle(.checkbox)
                     .onChange(of: launchAtLogin) { _, on in setLoginItem(on) }
                 Spacer()
+                Button {
+                    showFeedback = true
+                } label: {
+                    Label(L10n.feedbackCta, systemImage: "bubble.left").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
                 Button {
                     scanner.lastFreedBytes = 0
                     pixCopied = false
