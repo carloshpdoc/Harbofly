@@ -32,10 +32,17 @@ enum Prefs {
     static let staleThresholdDays = 90
     // Auto-clean (opt-in): limpa 🟢 seguros sozinho, sempre pra Lixeira.
     static let autoCleanEnabled = "autoCleanEnabled"
-    static let autoCleanTrigger = "autoCleanTrigger" // "xcode" | "daily" | "weekly"
+    static let autoCleanTrigger = "autoCleanTrigger" // "xcode" | "daily" | "weekly" | "lowdisk"
+    static let autoCleanScope = "autoCleanScope" // "caches" | "all" (caches + projetos parados)
     static let autoCleanLastRun = "autoCleanLastRun"
     /// Piso: só auto-limpa quando houver pelo menos isso a recuperar.
-    static let autoCleanMinBytes: Int64 = 1_000_000_000
+    static let autoCleanMinBytes = "autoCleanMinBytes"
+    static let autoCleanMinBytesDefault = 1_000_000_000
+    /// Histórico (últimas 10) e resumo da última limpeza automática.
+    static let autoCleanHistory = "autoCleanHistory"
+    static let autoCleanLastCleanTs = "autoCleanLastCleanTs"
+    static let autoCleanLastBytes = "autoCleanLastBytes"
+    static let autoCleanLastCount = "autoCleanLastCount"
     // Cadência da doação: quem já apoiou nunca mais é incomodado; quem adia
     // é adiado por intervalos crescentes.
     static let hasSupported = "hasSupported"
@@ -501,9 +508,9 @@ final class DiskScanner: ObservableObject {
 
     // MARK: auto-clean
 
-    /// Dispara o ciclo se estiver habilitado e "vencido". Xcode-quit roda no
-    /// máx 1x/h; diário/semanal seguem o intervalo. Marca a tentativa mesmo
-    /// abaixo do piso, pra não re-escanear em loop.
+    /// Dispara o ciclo se estiver habilitado e "vencido". Xcode-quit e disco
+    /// baixo rodam no máx 1x/h; diário/semanal seguem o intervalo. Marca a
+    /// tentativa mesmo abaixo do piso, pra não re-escanear em loop.
     func autoCleanIfDue(fromXcodeQuit: Bool) {
         let d = UserDefaults.standard
         guard d.bool(forKey: Prefs.autoCleanEnabled) else { return }
@@ -515,6 +522,11 @@ final class DiskScanner: ObservableObject {
             switch trigger {
             case "daily": guard elapsed >= 86_400 else { return }
             case "weekly": guard elapsed >= 604_800 else { return }
+            case "lowdisk":
+                // statfs é barato; checa direto se cruzou o limite do aviso.
+                guard elapsed >= 3_600 else { return }
+                let (free, total) = diskSpace()
+                guard total > 0, Double(free) / Double(total) < notifyThreshold else { return }
             default: return // "xcode" só dispara pelo observer
             }
         }
@@ -523,19 +535,34 @@ final class DiskScanner: ObservableObject {
     }
 
     /// Regras de confiança do auto-clean, mais duras que a limpeza manual:
-    /// só 🟢 seguros, NUNCA artifacts de projeto ativo (~/Development só se
-    /// parado 90+ dias), SEMPRE Lixeira (ignora o toggle permanente) e só
-    /// quando houver 1 GB+ a recuperar.
+    /// só 🟢 seguros; artifacts de ~/Development só no escopo "all" e ainda
+    /// assim apenas de projetos parados 90+ dias (projeto ativo nunca);
+    /// SEMPRE Lixeira (ignora o toggle permanente); e só acima do piso.
     private func performAutoClean() {
+        let d = UserDefaults.standard
+        let scope = d.string(forKey: Prefs.autoCleanScope) ?? "all"
+        let floor = (d.object(forKey: Prefs.autoCleanMinBytes) as? Int) ?? Prefs.autoCleanMinBytesDefault
         let devRoot = home.appendingPathComponent("Development").path
         let eligible = targets.filter { t in
             guard t.tier == .safe, !t.isDocker else { return false }
             guard t.url.path.hasPrefix(devRoot) else { return true }
+            guard scope == "all" else { return false }
             return (t.staleDays ?? 0) >= Prefs.staleThresholdDays
         }
         let total = eligible.reduce(Int64(0)) { $0 + $1.bytes }
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Prefs.autoCleanLastRun)
-        guard total >= Prefs.autoCleanMinBytes else { return }
+        d.set(Date().timeIntervalSince1970, forKey: Prefs.autoCleanLastRun)
+        guard total >= Int64(floor) else { return }
+
+        // Resumo + histórico (últimas 10) pra UI dar visibilidade do que
+        // o app fez sozinho.
+        d.set(Date().timeIntervalSince1970, forKey: Prefs.autoCleanLastCleanTs)
+        d.set(Double(total), forKey: Prefs.autoCleanLastBytes)
+        d.set(eligible.count, forKey: Prefs.autoCleanLastCount)
+        var hist = d.array(forKey: Prefs.autoCleanHistory) as? [[String: Double]] ?? []
+        hist.insert(["ts": Date().timeIntervalSince1970,
+                     "bytes": Double(total),
+                     "count": Double(eligible.count)], at: 0)
+        d.set(Array(hist.prefix(10)), forKey: Prefs.autoCleanHistory)
 
         notifyAutoClean(freed: total, count: eligible.count)
         delete(eligible, permanently: false)
@@ -604,6 +631,11 @@ struct ContentView: View {
     @AppStorage(Prefs.totalFreedBytes) private var totalFreedBytes = 0
     @AppStorage(Prefs.autoCleanEnabled) private var autoCleanEnabled = false
     @AppStorage(Prefs.autoCleanTrigger) private var autoCleanTrigger = "xcode"
+    @AppStorage(Prefs.autoCleanScope) private var autoCleanScope = "all"
+    @AppStorage(Prefs.autoCleanMinBytes) private var autoCleanMinBytes = Prefs.autoCleanMinBytesDefault
+    @AppStorage(Prefs.autoCleanLastCleanTs) private var autoCleanLastCleanTs = 0.0
+    @AppStorage(Prefs.autoCleanLastBytes) private var autoCleanLastBytes = 0.0
+    @AppStorage(Prefs.autoCleanLastCount) private var autoCleanLastCount = 0
     @AppStorage(Prefs.analyticsChoiceMade) private var analyticsChoiceMade = false
     @AppStorage(Prefs.analyticsEnabled) private var analyticsEnabled = false
     // Observa a troca manual de idioma: ao mudar, a View re-renderiza e o L10n
@@ -1008,6 +1040,68 @@ struct ContentView: View {
         feedbackFailed = false
     }
 
+    /// Configuração do auto-clean (só aparece com o toggle ligado):
+    /// quando, o quê, piso mínimo e a última limpeza (histórico no tooltip).
+    private var autoCleanConfig: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text(L10n.autoCleanWhenLabel).font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: $autoCleanTrigger) {
+                    Text(L10n.autoCleanXcode).tag("xcode")
+                    Text(L10n.autoCleanLowDisk).tag("lowdisk")
+                    Text(L10n.autoCleanDaily).tag("daily")
+                    Text(L10n.autoCleanWeekly).tag("weekly")
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+
+                Text(L10n.autoCleanMinLabel).font(.caption).foregroundStyle(.secondary)
+                    .padding(.leading, 6)
+                Picker("", selection: $autoCleanMinBytes) {
+                    Text("500 MB").tag(500_000_000)
+                    Text("1 GB").tag(1_000_000_000)
+                    Text("5 GB").tag(5_000_000_000)
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+                Spacer()
+            }
+            HStack(spacing: 6) {
+                Text(L10n.autoCleanScopeLabel).font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: $autoCleanScope) {
+                    Text(L10n.autoCleanScopeCaches).tag("caches")
+                    Text(L10n.autoCleanScopeAll).tag("all")
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+                Spacer()
+            }
+            Text(L10n.autoCleanNote)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if autoCleanLastCleanTs > 0 {
+                Text(L10n.autoCleanLast(
+                    date: Date(timeIntervalSince1970: autoCleanLastCleanTs)
+                        .formatted(date: .abbreviated, time: .shortened),
+                    size: fmt(Int64(autoCleanLastBytes)),
+                    count: autoCleanLastCount))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .help(autoCleanHistoryHelp)
+            } else {
+                Text(L10n.autoCleanNever)
+                    .font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.leading, 20)
+    }
+
+    /// Tooltip com as últimas limpezas automáticas.
+    private var autoCleanHistoryHelp: String {
+        let hist = UserDefaults.standard.array(forKey: Prefs.autoCleanHistory) as? [[String: Double]] ?? []
+        return hist.map { e in
+            let when = Date(timeIntervalSince1970: e["ts"] ?? 0)
+                .formatted(date: .abbreviated, time: .shortened)
+            return "\(when) — \(fmt(Int64(e["bytes"] ?? 0)))"
+        }.joined(separator: "\n")
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -1200,26 +1294,12 @@ struct ContentView: View {
                 .disabled(!notifyEnabled)
                 Spacer()
             }
-            HStack(spacing: 6) {
+            HStack {
                 Toggle(L10n.autoCleanToggle, isOn: $autoCleanEnabled)
                     .toggleStyle(.checkbox)
-                Picker("", selection: $autoCleanTrigger) {
-                    Text(L10n.autoCleanXcode).tag("xcode")
-                    Text(L10n.autoCleanDaily).tag("daily")
-                    Text(L10n.autoCleanWeekly).tag("weekly")
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-                .disabled(!autoCleanEnabled)
                 Spacer()
             }
-            if autoCleanEnabled {
-                Text(L10n.autoCleanNote)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            if autoCleanEnabled { autoCleanConfig }
             HStack {
                 Toggle(L10n.shareAnonToggle, isOn: Binding(
                     get: { analyticsEnabled },
