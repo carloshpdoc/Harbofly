@@ -397,6 +397,15 @@ struct ContentView: View {
         return url.path.replacingOccurrences(of: home, with: "~")
     }
 
+    // Guard de segurança: limpar caches do Xcode com ele aberto pode
+    // atrapalhar um build em andamento — avisa antes de confirmar.
+    private var xcodeIsRunning: Bool {
+        NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.apple.dt.Xcode" }
+    }
+    private var selectionTouchesXcode: Bool {
+        selectedTargets.contains { $0.url.path.contains("/Library/Developer/Xcode/") }
+    }
+
     var body: some View {
         ZStack {
             VStack(alignment: .leading, spacing: 10) {
@@ -574,6 +583,13 @@ struct ContentView: View {
 
                 if selectedTargets.contains(where: { $0.isDocker }) {
                     Text(L10n.dockerPruneNote)
+                        .font(.callout).foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if selectionTouchesXcode && xcodeIsRunning {
+                    Text(L10n.xcodeRunningNote)
                         .font(.callout).foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
