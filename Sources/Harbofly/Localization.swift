@@ -176,13 +176,14 @@ struct L {
     var autoCleanXcode: String { s("Ao fechar o Xcode", "When Xcode quits", es: "Al cerrar Xcode", fr: "À la fermeture de Xcode", de: "Beim Beenden von Xcode", zh: "退出 Xcode 时") }
     var autoCleanDaily: String { s("Diariamente", "Daily", es: "A diario", fr: "Chaque jour", de: "Täglich", zh: "每天") }
     var autoCleanWeekly: String { s("Semanalmente", "Weekly", es: "Semanalmente", fr: "Chaque semaine", de: "Wöchentlich", zh: "每周") }
-    var autoCleanNote: String { s("Só itens 🟢 seguros, sempre pra Lixeira. Projetos ativos nunca são tocados.", "Only 🟢 safe items, always to the Trash. Active projects are never touched.", es: "Solo elementos 🟢 seguros, siempre a la Papelera. Los proyectos activos nunca se tocan.", fr: "Uniquement les éléments 🟢 sûrs, toujours vers la Corbeille. Les projets actifs ne sont jamais touchés.", de: "Nur 🟢 sichere Elemente, immer in den Papierkorb. Aktive Projekte werden nie angetastet.", zh: "只清理 🟢 安全项，始终移到废纸篓。绝不触碰活跃项目。") }
+    var autoCleanNote: String { s("Só itens 🟢 seguros, sempre pra Lixeira. Seu código-fonte nunca é tocado.", "Only 🟢 safe items, always to the Trash. Your source code is never touched.", es: "Solo elementos 🟢 seguros, siempre a la Papelera. Tu código fuente nunca se toca.", fr: "Uniquement les éléments 🟢 sûrs, toujours vers la Corbeille. Votre code source n'est jamais touché.", de: "Nur 🟢 sichere Elemente, immer in den Papierkorb. Dein Quellcode wird nie angetastet.", zh: "只清理 🟢 安全项，始终移到废纸篓。绝不触碰你的源代码。") }
     var autoCleanWhenLabel: String { s("Quando:", "When:", es: "Cuándo:", fr: "Quand :", de: "Wann:", zh: "时机：") }
     var autoCleanScopeLabel: String { s("O quê:", "What:", es: "Qué:", fr: "Quoi :", de: "Was:", zh: "范围：") }
     var autoCleanMinLabel: String { s("Mínimo:", "Minimum:", es: "Mínimo:", fr: "Minimum :", de: "Minimum:", zh: "下限：") }
     var autoCleanLowDisk: String { s("Quando o disco ficar baixo", "When disk runs low", es: "Cuando quede poco disco", fr: "Quand le disque est presque plein", de: "Wenn der Speicher knapp wird", zh: "磁盘空间不足时") }
-    var autoCleanScopeCaches: String { s("Só caches", "Caches only", es: "Solo cachés", fr: "Caches seulement", de: "Nur Caches", zh: "仅缓存") }
+    var autoCleanScopeCaches: String { s("Só caches de ferramentas", "Tool caches only", es: "Solo cachés de herramientas", fr: "Caches d'outils seulement", de: "Nur Tool-Caches", zh: "仅工具缓存") }
     var autoCleanScopeAll: String { s("Caches + projetos parados", "Caches + idle projects", es: "Cachés + proyectos inactivos", fr: "Caches + projets inactifs", de: "Caches + inaktive Projekte", zh: "缓存 + 闲置项目") }
+    var autoCleanScopeMax: String { s("Tudo 🟢 (com DerivedData ativo)", "Everything 🟢 (incl. active DerivedData)", es: "Todo 🟢 (con DerivedData activo)", fr: "Tout 🟢 (avec DerivedData actif)", de: "Alles 🟢 (inkl. aktivem DerivedData)", zh: "全部 🟢（含活跃项目的 DerivedData）") }
     func autoCleanLast(date: String, size: String, count: Int) -> String {
         s("Última: \(date) — \(size) (\(count) itens)", "Last: \(date) — \(size) (\(count) items)",
           es: "Última: \(date) — \(size) (\(count) elementos)", fr: "Dernier : \(date) — \(size) (\(count) éléments)",

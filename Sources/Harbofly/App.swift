@@ -33,7 +33,11 @@ enum Prefs {
     // Auto-clean (opt-in): limpa 🟢 seguros sozinho, sempre pra Lixeira.
     static let autoCleanEnabled = "autoCleanEnabled"
     static let autoCleanTrigger = "autoCleanTrigger" // "xcode" | "daily" | "weekly" | "lowdisk"
-    static let autoCleanScope = "autoCleanScope" // "caches" | "all" (caches + projetos parados)
+    // Escopo do auto-clean, em escada de custo de rebuild:
+    // "caches" = só caches de ferramentas (re-baixam sob demanda);
+    // "all"    = + artifacts/DerivedData de projetos PARADOS (default);
+    // "max"    = + DerivedData de projetos ativos (rebuild na próxima build).
+    static let autoCleanScope = "autoCleanScope"
     static let autoCleanLastRun = "autoCleanLastRun"
     /// Piso: só auto-limpa quando houver pelo menos isso a recuperar.
     static let autoCleanMinBytes = "autoCleanMinBytes"
@@ -545,9 +549,17 @@ final class DiskScanner: ObservableObject {
         let devRoot = home.appendingPathComponent("Development").path
         let eligible = targets.filter { t in
             guard t.tier == .safe, !t.isDocker else { return false }
-            guard t.url.path.hasPrefix(devRoot) else { return true }
-            guard scope == "all" else { return false }
-            return (t.staleDays ?? 0) >= Prefs.staleThresholdDays
+            let isStaleProject = (t.staleDays ?? 0) >= Prefs.staleThresholdDays
+            if t.url.path.hasPrefix(devRoot) {
+                // Artifacts dentro do projeto (node_modules, .build…): só de
+                // projetos parados, e nunca no escopo mais conservador.
+                return scope != "caches" && isStaleProject
+            }
+            if t.url.path.contains("/Xcode/DerivedData/") {
+                // DerivedData de projeto ativo custa rebuild: só no "max".
+                return isStaleProject || scope == "max"
+            }
+            return true // caches de ferramentas: re-baixam sob demanda
         }
         let total = eligible.reduce(Int64(0)) { $0 + $1.bytes }
         d.set(Date().timeIntervalSince1970, forKey: Prefs.autoCleanLastRun)
@@ -1069,6 +1081,7 @@ struct ContentView: View {
                 Picker("", selection: $autoCleanScope) {
                     Text(L10n.autoCleanScopeCaches).tag("caches")
                     Text(L10n.autoCleanScopeAll).tag("all")
+                    Text(L10n.autoCleanScopeMax).tag("max")
                 }
                 .labelsHidden().pickerStyle(.menu).fixedSize()
                 Spacer()
