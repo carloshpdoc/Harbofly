@@ -422,6 +422,8 @@ final class DiskScanner: ObservableObject {
             ("Library/Developer/CoreSimulator", "CoreSimulator", L10n.coreSimulatorDetail),
             ("Library/Application Support", "Application Support", L10n.appSupportDetail),
             ("Downloads", "Downloads", L10n.downloadsDetail),
+            ("Documents", "Documents", L10n.documentsDetail),
+            ("Desktop", "Desktop", L10n.desktopDetail),
         ]
         var out: [CleanTarget] = []
         for (rel, label, detail) in specs {
