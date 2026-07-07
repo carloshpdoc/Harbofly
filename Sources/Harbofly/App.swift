@@ -588,6 +588,24 @@ final class DiskScanner: ObservableObject {
         UNUserNotificationCenter.current().add(req)
     }
 
+    // MARK: simuladores antigos
+
+    /// Apaga simuladores de runtimes antigos (indisponíveis pro Xcode atual)
+    /// via `xcrun simctl delete unavailable`. Irreversível (não passa pela
+    /// Lixeira) — a UI pede confirmação em dois cliques. Re-escaneia ao fim.
+    func deleteUnavailableSimulators() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+            p.arguments = ["simctl", "delete", "unavailable"]
+            p.standardOutput = Pipe()
+            p.standardError = Pipe()
+            try? p.run()
+            p.waitUntilExit()
+            DispatchQueue.main.async { self?.scan() }
+        }
+    }
+
     // MARK: notificação de disco baixo
 
     private var notifyEnabled: Bool {
@@ -621,6 +639,7 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var selection = Set<UUID>()
     @State private var confirming = false
+    @State private var confirmingSimDelete = false
     @State private var launchAtLogin = false
     @State private var showSupport = false
     @State private var pixCopied = false
@@ -1233,12 +1252,34 @@ struct ContentView: View {
                     .font(.caption.monospaced()).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
                 Text(t.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([t.url])
-                } label: {
-                    Label(L10n.revealInFinder, systemImage: "magnifyingglass").font(.caption)
+                HStack(spacing: 12) {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([t.url])
+                    } label: {
+                        Label(L10n.revealInFinder, systemImage: "magnifyingglass").font(.caption)
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.blue)
+
+                    // Ação especial do CoreSimulator: 1 clique arma, 2º executa
+                    // (simctl delete unavailable é irreversível).
+                    if t.url.path.hasSuffix("Developer/CoreSimulator") {
+                        Button {
+                            if confirmingSimDelete {
+                                confirmingSimDelete = false
+                                scanner.deleteUnavailableSimulators()
+                            } else {
+                                confirmingSimDelete = true
+                            }
+                        } label: {
+                            Label(confirmingSimDelete ? L10n.deleteOldSimsConfirm : L10n.deleteOldSims,
+                                  systemImage: confirmingSimDelete ? "exclamationmark.triangle.fill" : "trash")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(confirmingSimDelete ? .red : .blue)
+                    }
                 }
-                .buttonStyle(.plain).foregroundStyle(.blue).padding(.top, 2)
+                .padding(.top, 2)
             }
         }
         .padding(10)

@@ -142,6 +142,8 @@ struct L {
     var tierCaution: String { s("🟡 Cuidado: recria, mas custa", "🟡 Caution: rebuilds, but costs", es: "🟡 Cuidado: se recrea, pero cuesta", fr: "🟡 Attention : se recrée, mais ça coûte", de: "🟡 Vorsicht: wird neu erstellt, kostet aber", zh: "🟡 谨慎：可重建，但有代价") }
     var tierInfo: String { s("🔵 Informativo: só pra você saber (o app não apaga)", "🔵 Info: just so you know (the app doesn't delete)", es: "🔵 Informativo: solo para que lo sepas (la app no borra)", fr: "🔵 Info : juste pour information (l'app ne supprime pas)", de: "🔵 Info: nur zur Kenntnis (die App löscht nichts)", zh: "🔵 信息：仅供参考（应用不会删除）") }
     var revealInFinder: String { s("Revelar no Finder", "Reveal in Finder", es: "Mostrar en el Finder", fr: "Afficher dans le Finder", de: "Im Finder zeigen", zh: "在访达中显示") }
+    var deleteOldSims: String { s("Apagar simuladores antigos", "Delete old simulators", es: "Borrar simuladores antiguos", fr: "Supprimer les anciens simulateurs", de: "Alte Simulatoren löschen", zh: "删除旧模拟器") }
+    var deleteOldSimsConfirm: String { s("Tem certeza? Remove de vez (simctl delete unavailable)", "Are you sure? Removes permanently (simctl delete unavailable)", es: "¿Seguro? Se eliminan de forma permanente (simctl delete unavailable)", fr: "Sûr ? Suppression définitive (simctl delete unavailable)", de: "Sicher? Endgültiges Löschen (simctl delete unavailable)", zh: "确定吗？将永久删除（simctl delete unavailable）") }
 
     // MARK: projetos parados (staleness)
     func staleProject(days: Int) -> String {
