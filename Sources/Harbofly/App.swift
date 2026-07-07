@@ -17,7 +17,7 @@ enum AppInfo {
 /// Apoio (tip jar).
 enum Support {
     static let pixKey = "1570c17b-7e20-4258-8ad8-f83f15250502"
-    static let webURL = "https://ko-fi.com/carloshperc"
+    static let webURL = "https://ko-fi.com/buildcomcarlos"
 }
 
 /// Chaves de preferência (UserDefaults / @AppStorage).
