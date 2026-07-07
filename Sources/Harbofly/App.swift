@@ -40,7 +40,8 @@ enum Prefs {
     static let analyticsEnabled = "analyticsEnabled"
     static let firstLaunchSent = "analyticsFirstLaunchSent"
     static let firstScanSent = "analyticsFirstScanSent"
-    // Idioma da UI: "system" (default), "pt" ou "en" (ver Localization.swift).
+    // Idioma da UI: "system" (default) ou um código suportado — "pt", "en",
+    // "es", "fr", "de", "zh" (ver Localization.swift).
     static let language = "language"
 }
 
@@ -814,6 +815,10 @@ struct ContentView: View {
                     Text(L10n.langSystem).tag("system")
                     Text("Português").tag("pt")
                     Text("English").tag("en")
+                    Text("Español").tag("es")
+                    Text("Français").tag("fr")
+                    Text("Deutsch").tag("de")
+                    Text("简体中文").tag("zh")
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
