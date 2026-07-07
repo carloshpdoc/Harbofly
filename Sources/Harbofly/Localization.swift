@@ -155,12 +155,14 @@ struct L {
                  es: "Proyecto inactivo desde hace \(days) días", fr: "Projet inactif depuis \(days) jours",
                  de: "Projekt seit \(days) Tagen inaktiv", zh: "项目已闲置 \(days) 天")
     }
-    var selectStale: String { s("Selecionar parados", "Select stale", es: "Seleccionar inactivos", fr: "Sélectionner les inactifs", de: "Inaktive auswählen", zh: "选择闲置项") }
+    var selectStale: String { s("Parados", "Stale", es: "Inactivos", fr: "Inactifs", de: "Inaktive", zh: "闲置项") }
     var selectStaleHelp: String { s("Artifacts de projetos sem atividade (git/arquivos) há 90+ dias", "Artifacts from projects with no activity (git/files) in 90+ days", es: "Artefactos de proyectos sin actividad (git/archivos) desde hace 90+ días", fr: "Artefacts de projets sans activité (git/fichiers) depuis 90+ jours", de: "Artefakte von Projekten ohne Aktivität (Git/Dateien) seit 90+ Tagen", zh: "来自 90 天以上无活动（git/文件）项目的产物") }
     var unsavedWorkNote: String { s("Tem mudanças não commitadas ou não enviadas ao remoto", "Has uncommitted or unpushed changes", es: "Tiene cambios sin commit o sin push", fr: "Contient des modifications non commitées ou non poussées", de: "Hat nicht committete oder nicht gepushte Änderungen", zh: "有未提交或未推送的更改") }
 
     // MARK: footer
-    var selectSafe: String { s("Selecionar seguros", "Select safe", es: "Seleccionar seguros", fr: "Sélectionner les sûrs", de: "Sichere auswählen", zh: "选择安全项") }
+    var selectLabel: String { s("Selecionar:", "Select:", es: "Seleccionar:", fr: "Sélectionner :", de: "Auswählen:", zh: "选择：") }
+    var selectSafe: String { s("Seguros", "Safe", es: "Seguros", fr: "Sûrs", de: "Sichere", zh: "安全项") }
+    var selectSafeHelp: String { s("Seleciona tudo do tier 🟢 seguro (regenera sozinho)", "Selects everything in the 🟢 safe tier (regenerates itself)", es: "Selecciona todo el nivel 🟢 seguro (se regenera solo)", fr: "Sélectionne tout le niveau 🟢 sûr (se régénère tout seul)", de: "Wählt alles der Stufe 🟢 sicher aus (regeneriert sich selbst)", zh: "选择所有 🟢 安全项（会自动重新生成）") }
     var clearSelection: String { s("Limpar seleção", "Clear selection", es: "Limpiar selección", fr: "Effacer la sélection", de: "Auswahl aufheben", zh: "清除选择") }
     var delete: String { s("Excluir", "Delete", es: "Eliminar", fr: "Supprimer", de: "Löschen", zh: "删除") }
     func deleteWithSize(_ size: String) -> String { s("Excluir (\(size))", "Delete (\(size))", es: "Eliminar (\(size))", fr: "Supprimer (\(size))", de: "Löschen (\(size))", zh: "删除（\(size)）") }

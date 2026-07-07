@@ -1133,17 +1133,25 @@ struct ContentView: View {
     private var footer: some View {
         VStack(spacing: 8) {
             HStack {
+                Text(L10n.selectLabel)
+                    .font(.caption).foregroundStyle(.secondary)
                 Button(L10n.selectSafe) {
                     selection = Set(scanner.targets.filter { $0.tier == .safe }.map { $0.id })
                 }
+                .help(L10n.selectSafeHelp)
                 if !staleTargets.isEmpty {
                     Button(L10n.selectStale) {
                         selection = Set(staleTargets.map { $0.id })
                     }
                     .help(L10n.selectStaleHelp)
                 }
-                Button(L10n.clearSelection) { selection.removeAll() }
-                    .disabled(selection.isEmpty)
+                Button {
+                    selection.removeAll()
+                } label: {
+                    Image(systemName: "xmark.circle")
+                }
+                .help(L10n.clearSelection)
+                .disabled(selection.isEmpty)
                 Spacer()
                 Button {
                     Analytics.deleteClicked(mode: deletePermanently ? "permanent" : "trash",
