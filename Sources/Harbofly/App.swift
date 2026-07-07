@@ -106,7 +106,8 @@ final class DiskScanner: ObservableObject {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             let (free, total) = self.diskSpace()
-            var found = self.scanDevelopment() + self.scanLibrary() + self.scanInfo() + self.scanDocker()
+            var found = self.scanDevelopment() + self.scanDerivedData() + self.scanLibrary()
+                + self.scanInfo() + self.scanDocker()
             found.sort { $0.bytes > $1.bytes }
             DispatchQueue.main.async {
                 self.freeBytes = free
@@ -239,6 +240,53 @@ final class DiskScanner: ObservableObject {
         return out
     }
 
+    /// DerivedData quebrado por projeto (em vez de um blob único): cada
+    /// subpasta vira uma linha. O projeto dono vem do info.plist
+    /// (WorkspacePath) — quando existe, a linha ganha o nome da pasta do
+    /// projeto e herda a detecção de staleness. Pastas de sistema
+    /// (ModuleCache.noindex…) aparecem com o nome cru, sem staleness.
+    private func scanDerivedData() -> [CleanTarget] {
+        let dd = home.appendingPathComponent("Library/Developer/Xcode/DerivedData")
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: dd, includingPropertiesForKeys: [.isDirectoryKey], options: []
+        ) else { return [] }
+        var out: [CleanTarget] = []
+        for item in items {
+            let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            guard isDir else { continue }
+            let b = size(of: item)
+            guard b > minBytes else { continue }
+
+            let raw = item.lastPathComponent
+            // "Projeto-hash" -> "Projeto"; nomes sem hash (ModuleCache.noindex) ficam como estão.
+            var project = raw.contains("-")
+                ? raw.components(separatedBy: "-").dropLast().joined(separator: "-")
+                : raw
+            var stale: Int? = nil
+            if let ws = workspacePath(of: item) {
+                let projDir = ws.deletingLastPathComponent()
+                project = projDir.lastPathComponent // desambigua clones/worktrees do mesmo app
+                if let last = projectActivity(from: projDir) {
+                    stale = max(0, Int(Date().timeIntervalSince(last) / 86_400))
+                }
+            }
+            out.append(CleanTarget(url: item, label: "DerivedData/\(project)",
+                                   detail: L10n.xcodeDerived, tier: .safe, bytes: b,
+                                   staleDays: stale))
+        }
+        return out
+    }
+
+    /// Workspace/projeto que gerou a pasta de DerivedData (info.plist do Xcode).
+    private func workspacePath(of derived: URL) -> URL? {
+        let plist = derived.appendingPathComponent("info.plist")
+        guard let data = try? Data(contentsOf: plist),
+              let dict = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+                  as? [String: Any],
+              let path = dict["WorkspacePath"] as? String else { return nil }
+        return URL(fileURLWithPath: path)
+    }
+
     /// Última atividade do projeto, 100% local: mtime do .git/index ou
     /// .git/HEAD (commit/checkout/uso do git). Sobe até 3 níveis pra achar o
     /// .git de monorepos. Sem git, cai pro mtime da pasta do projeto.
@@ -268,8 +316,7 @@ final class DiskScanner: ObservableObject {
     /// dezenas de GB fácil).
     private func scanLibrary() -> [CleanTarget] {
         let specs: [(String, String, Tier, String)] = [
-            // Xcode & Apple
-            ("Library/Developer/Xcode/DerivedData", "DerivedData", .safe, L10n.xcodeDerived),
+            // Xcode & Apple (DerivedData tem scanner próprio, por projeto)
             ("Library/Developer/Xcode/iOS DeviceSupport", "iOS DeviceSupport", .caution, L10n.iosDeviceSupport),
             ("Library/Developer/Xcode/Archives", "Xcode Archives", .caution, L10n.xcodeArchives),
             ("Library/Developer/XcodeBuildMCP/workspaces", "workspaces", .safe, L10n.xcodeBuildMCP),
