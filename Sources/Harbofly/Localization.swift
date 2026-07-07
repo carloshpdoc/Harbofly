@@ -125,6 +125,7 @@ struct L {
     var pixCopied: String { s("Chave PIX copiada!", "PIX key copied!", es: "¡Clave PIX copiada!", fr: "Clé PIX copiée !", de: "PIX-Schlüssel kopiert!", zh: "PIX 密钥已复制！") }
     var copyPix: String { s("Copiar chave PIX (R$2)", "Copy PIX key (R$2)", es: "Copiar clave PIX", fr: "Copier la clé PIX", de: "PIX-Schlüssel kopieren", zh: "复制 PIX 密钥") }
     var alreadySupported: String { s("Já apoiei ❤️", "Already supported ❤️", es: "Ya aporté ❤️", fr: "J'ai déjà soutenu ❤️", de: "Schon unterstützt ❤️", zh: "已支持 ❤️") }
+    func totalFreed(_ size: String) -> String { s("No total, o \(AppInfo.name) já liberou \(size) pra você", "In total, \(AppInfo.name) has freed \(size) for you", es: "En total, \(AppInfo.name) ya liberó \(size) para ti", fr: "Au total, \(AppInfo.name) a déjà libéré \(size) pour vous", de: "Insgesamt hat \(AppInfo.name) schon \(size) für dich freigegeben", zh: "\(AppInfo.name) 总共已为你释放了 \(size)") }
     var notNow: String { s("Agora não", "Not now", es: "Ahora no", fr: "Pas maintenant", de: "Jetzt nicht", zh: "暂时不用") }
 
     // MARK: header

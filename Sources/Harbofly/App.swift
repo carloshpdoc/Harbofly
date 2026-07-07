@@ -43,6 +43,8 @@ enum Prefs {
     // Idioma da UI: "system" (default) ou um código suportado — "pt", "en",
     // "es", "fr", "de", "zh" (ver Localization.swift).
     static let language = "language"
+    // Total acumulado (bytes) já limpo pelo app, na vida toda.
+    static let totalFreedBytes = "totalFreedBytes"
 }
 
 // MARK: - Model
@@ -146,6 +148,9 @@ final class DiskScanner: ObservableObject {
             }
             let freedFinal = freed, countFinal = count, categories = byCategory
             DispatchQueue.main.async {
+                let d = UserDefaults.standard
+                d.set(Int(d.integer(forKey: Prefs.totalFreedBytes)) + Int(freedFinal),
+                      forKey: Prefs.totalFreedBytes)
                 self?.lastFreedBytes = freedFinal
                 self?.lastDeletePermanent = permanently
                 self?.justCleaned = true
@@ -368,6 +373,7 @@ struct ContentView: View {
     @AppStorage(Prefs.hasSupported) private var hasSupported = false
     @AppStorage(Prefs.donateSnoozeUntil) private var donateSnoozeUntil = 0.0
     @AppStorage(Prefs.donateSnoozeCount) private var donateSnoozeCount = 0
+    @AppStorage(Prefs.totalFreedBytes) private var totalFreedBytes = 0
     @AppStorage(Prefs.analyticsChoiceMade) private var analyticsChoiceMade = false
     @AppStorage(Prefs.analyticsEnabled) private var analyticsEnabled = false
     // Observa a troca manual de idioma: ao mudar, a View re-renderiza e o L10n
@@ -625,6 +631,13 @@ struct ContentView: View {
                      : L10n.thanks)
                     .font(.title3.bold())
                     .multilineTextAlignment(.center)
+
+                // Histórico: quanto o app já liberou na vida toda.
+                if totalFreedBytes > 0 && Int64(totalFreedBytes) != freed {
+                    Text(L10n.totalFreed(fmt(Int64(totalFreedBytes))))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
 
                 // Momento de valor: compartilhar a conquista (só após uma limpeza real).
                 if freed > 0 {
