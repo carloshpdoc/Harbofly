@@ -141,6 +141,21 @@ struct L {
     var tierInfo: String { s("🔵 Informativo: só pra você saber (o app não apaga)", "🔵 Info: just so you know (the app doesn't delete)", es: "🔵 Informativo: solo para que lo sepas (la app no borra)", fr: "🔵 Info : juste pour information (l'app ne supprime pas)", de: "🔵 Info: nur zur Kenntnis (die App löscht nichts)", zh: "🔵 信息：仅供参考（应用不会删除）") }
     var revealInFinder: String { s("Revelar no Finder", "Reveal in Finder", es: "Mostrar en el Finder", fr: "Afficher dans le Finder", de: "Im Finder zeigen", zh: "在访达中显示") }
 
+    // MARK: projetos parados (staleness)
+    func staleProject(days: Int) -> String {
+        let months = days / 30
+        if months >= 2 {
+            return s("Projeto parado há \(months) meses", "Project idle for \(months) months",
+                     es: "Proyecto inactivo desde hace \(months) meses", fr: "Projet inactif depuis \(months) mois",
+                     de: "Projekt seit \(months) Monaten inaktiv", zh: "项目已闲置 \(months) 个月")
+        }
+        return s("Projeto parado há \(days) dias", "Project idle for \(days) days",
+                 es: "Proyecto inactivo desde hace \(days) días", fr: "Projet inactif depuis \(days) jours",
+                 de: "Projekt seit \(days) Tagen inaktiv", zh: "项目已闲置 \(days) 天")
+    }
+    var selectStale: String { s("Selecionar parados", "Select stale", es: "Seleccionar inactivos", fr: "Sélectionner les inactifs", de: "Inaktive auswählen", zh: "选择闲置项") }
+    var selectStaleHelp: String { s("Artifacts de projetos sem atividade (git/arquivos) há 90+ dias", "Artifacts from projects with no activity (git/files) in 90+ days", es: "Artefactos de proyectos sin actividad (git/archivos) desde hace 90+ días", fr: "Artefacts de projets sans activité (git/fichiers) depuis 90+ jours", de: "Artefakte von Projekten ohne Aktivität (Git/Dateien) seit 90+ Tagen", zh: "来自 90 天以上无活动（git/文件）项目的产物") }
+
     // MARK: footer
     var selectSafe: String { s("Selecionar seguros", "Select safe", es: "Seleccionar seguros", fr: "Sélectionner les sûrs", de: "Sichere auswählen", zh: "选择安全项") }
     var clearSelection: String { s("Limpar seleção", "Clear selection", es: "Limpiar selección", fr: "Effacer la sélection", de: "Auswahl aufheben", zh: "清除选择") }

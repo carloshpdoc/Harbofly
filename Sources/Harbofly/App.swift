@@ -28,6 +28,8 @@ enum Prefs {
     static let notifyEnabled = "notifyEnabled"
     static let notifyThreshold = "notifyThreshold"
     static let defaultThreshold = 0.10
+    /// Projeto sem atividade (git/mtime) há mais que isso = "parado".
+    static let staleThresholdDays = 90
     // Cadência da doação: quem já apoiou nunca mais é incomodado; quem adia
     // é adiado por intervalos crescentes.
     static let hasSupported = "hasSupported"
@@ -65,6 +67,9 @@ struct CleanTarget: Identifiable {
     let detail: String
     let tier: Tier
     var bytes: Int64
+    /// Dias desde a última atividade do projeto dono (só artifacts de dev;
+    /// nil quando não se aplica ou não deu pra medir).
+    var staleDays: Int? = nil
     /// Alvo do Docker: a ação é `docker system prune` (irreversível), não Lixeira.
     var isDocker = false
 }
@@ -209,13 +214,18 @@ final class DiskScanner: ObservableObject {
                 if names.contains(item.lastPathComponent) {
                     let b = size(of: item)
                     if b > minBytes {
-                        let project = item.deletingLastPathComponent().lastPathComponent
+                        let projectDir = item.deletingLastPathComponent()
+                        var stale: Int? = nil
+                        if let last = projectActivity(from: projectDir) {
+                            stale = max(0, Int(Date().timeIntervalSince(last) / 86_400))
+                        }
                         out.append(CleanTarget(
                             url: item,
-                            label: "\(project)/\(item.lastPathComponent)",
+                            label: "\(projectDir.lastPathComponent)/\(item.lastPathComponent)",
                             detail: L10n.devArtifact,
                             tier: .safe,
-                            bytes: b
+                            bytes: b,
+                            staleDays: stale
                         ))
                     }
                     // não desce dentro do artifact
@@ -227,6 +237,29 @@ final class DiskScanner: ObservableObject {
 
         recurse(dev, depth: 0)
         return out
+    }
+
+    /// Última atividade do projeto, 100% local: mtime do .git/index ou
+    /// .git/HEAD (commit/checkout/uso do git). Sobe até 3 níveis pra achar o
+    /// .git de monorepos. Sem git, cai pro mtime da pasta do projeto.
+    private func projectActivity(from dir: URL) -> Date? {
+        let fm = FileManager.default
+        func mtime(_ url: URL) -> Date? {
+            (try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        }
+        var probe = dir
+        for _ in 0..<4 {
+            let git = probe.appendingPathComponent(".git")
+            if fm.fileExists(atPath: git.path) {
+                let dates = [git.appendingPathComponent("index"),
+                             git.appendingPathComponent("HEAD")].compactMap(mtime)
+                if let latest = dates.max() { return latest }
+            }
+            let parent = probe.deletingLastPathComponent()
+            guard parent.path != probe.path, probe.path != home.path else { break }
+            probe = parent
+        }
+        return mtime(dir)
     }
 
     /// Alvos conhecidos de caches dev na home (~/Library e dotfiles).
@@ -392,6 +425,9 @@ struct ContentView: View {
     private var selectedTargets: [CleanTarget] { scanner.targets.filter { selection.contains($0.id) } }
     private var selectedBytes: Int64 { selectedTargets.reduce(0) { $0 + $1.bytes } }
     private var safeTargets: [CleanTarget] { scanner.targets.filter { $0.tier == .safe } }
+    private var staleTargets: [CleanTarget] {
+        scanner.targets.filter { !$0.tier.isReadOnly && ($0.staleDays ?? 0) >= Prefs.staleThresholdDays }
+    }
     private var cautionTargets: [CleanTarget] { scanner.targets.filter { $0.tier == .caution } }
     private var infoTargets: [CleanTarget] { scanner.targets.filter { $0.tier == .info } }
     private var freeRatio: Double {
@@ -859,6 +895,10 @@ struct ContentView: View {
                     .font(.caption.monospaced()).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
                 Text(t.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                if let days = t.staleDays, days >= Prefs.staleThresholdDays {
+                    Label(L10n.staleProject(days: days), systemImage: "moon.zzz.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                }
             }
         }
         .padding(10)
@@ -903,6 +943,12 @@ struct ContentView: View {
             HStack {
                 Button(L10n.selectSafe) {
                     selection = Set(scanner.targets.filter { $0.tier == .safe }.map { $0.id })
+                }
+                if !staleTargets.isEmpty {
+                    Button(L10n.selectStale) {
+                        selection = Set(staleTargets.map { $0.id })
+                    }
+                    .help(L10n.selectStaleHelp)
                 }
                 Button(L10n.clearSelection) { selection.removeAll() }
                     .disabled(selection.isEmpty)
