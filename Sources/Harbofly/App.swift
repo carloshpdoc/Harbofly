@@ -70,6 +70,9 @@ struct CleanTarget: Identifiable {
     /// Dias desde a última atividade do projeto dono (só artifacts de dev;
     /// nil quando não se aplica ou não deu pra medir).
     var staleDays: Int? = nil
+    /// Projeto parado com mudanças não commitadas ou commits não pushados —
+    /// trabalho esquecido sem backup no remoto (só checado quando parado).
+    var unsavedWork = false
     /// Alvo do Docker: a ação é `docker system prune` (irreversível), não Lixeira.
     var isDocker = false
 }
@@ -105,6 +108,7 @@ final class DiskScanner: ObservableObject {
         let startedAt = Date()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
+            self.unsavedCache.removeAll()
             let (free, total) = self.diskSpace()
             var found = self.scanDevelopment() + self.scanDerivedData() + self.scanLibrary()
                 + self.scanInfo() + self.scanDocker()
@@ -220,13 +224,15 @@ final class DiskScanner: ObservableObject {
                         if let last = projectActivity(from: projectDir) {
                             stale = max(0, Int(Date().timeIntervalSince(last) / 86_400))
                         }
+                        let isStale = (stale ?? 0) >= Prefs.staleThresholdDays
                         out.append(CleanTarget(
                             url: item,
                             label: "\(projectDir.lastPathComponent)/\(item.lastPathComponent)",
                             detail: L10n.devArtifact,
                             tier: .safe,
                             bytes: b,
-                            staleDays: stale
+                            staleDays: stale,
+                            unsavedWork: isStale && hasUnsavedWork(projectDir)
                         ))
                     }
                     // não desce dentro do artifact
@@ -263,16 +269,20 @@ final class DiskScanner: ObservableObject {
                 ? raw.components(separatedBy: "-").dropLast().joined(separator: "-")
                 : raw
             var stale: Int? = nil
+            var unsaved = false
             if let ws = workspacePath(of: item) {
                 let projDir = ws.deletingLastPathComponent()
                 project = projDir.lastPathComponent // desambigua clones/worktrees do mesmo app
                 if let last = projectActivity(from: projDir) {
                     stale = max(0, Int(Date().timeIntervalSince(last) / 86_400))
                 }
+                if (stale ?? 0) >= Prefs.staleThresholdDays {
+                    unsaved = hasUnsavedWork(projDir)
+                }
             }
             out.append(CleanTarget(url: item, label: "DerivedData/\(project)",
                                    detail: L10n.xcodeDerived, tier: .safe, bytes: b,
-                                   staleDays: stale))
+                                   staleDays: stale, unsavedWork: unsaved))
         }
         return out
     }
@@ -285,6 +295,48 @@ final class DiskScanner: ObservableObject {
                   as? [String: Any],
               let path = dict["WorkspacePath"] as? String else { return nil }
         return URL(fileURLWithPath: path)
+    }
+
+    /// Cache por scan: projeto -> tem trabalho não salvo (evita repetir o
+    /// `git status` quando vários artifacts pertencem ao mesmo projeto).
+    private var unsavedCache: [String: Bool] = [:]
+
+    /// true se o repo tem mudanças não commitadas ou commits não pushados.
+    /// Só é chamado pra projetos PARADOS (é onde o aviso importa: trabalho
+    /// esquecido sem backup no remoto). Local, via /usr/bin/git — sem rede.
+    private func hasUnsavedWork(_ dir: URL) -> Bool {
+        if let cached = unsavedCache[dir.path] { return cached }
+        let result = checkUnsavedWork(dir)
+        unsavedCache[dir.path] = result
+        return result
+    }
+
+    private func checkUnsavedWork(_ dir: URL) -> Bool {
+        let gitPath = "/usr/bin/git"
+        guard FileManager.default.isExecutableFile(atPath: gitPath) else { return false }
+        func git(_ args: [String]) -> String? {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: gitPath)
+            p.arguments = ["-C", dir.path] + args
+            let out = Pipe()
+            p.standardOutput = out
+            p.standardError = Pipe()
+            do { try p.run() } catch { return nil }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            guard p.terminationStatus == 0 else { return nil }
+            return String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // mudanças não commitadas (ignora untracked: menos ruído, mais rápido)
+        if let status = git(["status", "--porcelain", "--untracked-files=no"]), !status.isEmpty {
+            return true
+        }
+        // commits locais que não existem em nenhum remote
+        if let ahead = git(["log", "--branches", "--not", "--remotes", "--oneline", "-1"]), !ahead.isEmpty {
+            return true
+        }
+        return false
     }
 
     /// Última atividade do projeto, 100% local: mtime do .git/index ou
@@ -945,6 +997,10 @@ struct ContentView: View {
                 if let days = t.staleDays, days >= Prefs.staleThresholdDays {
                     Label(L10n.staleProject(days: days), systemImage: "moon.zzz.fill")
                         .font(.caption).foregroundStyle(.orange)
+                }
+                if t.unsavedWork {
+                    Label(L10n.unsavedWorkNote, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.red)
                 }
             }
         }

@@ -155,6 +155,7 @@ struct L {
     }
     var selectStale: String { s("Selecionar parados", "Select stale", es: "Seleccionar inactivos", fr: "Sélectionner les inactifs", de: "Inaktive auswählen", zh: "选择闲置项") }
     var selectStaleHelp: String { s("Artifacts de projetos sem atividade (git/arquivos) há 90+ dias", "Artifacts from projects with no activity (git/files) in 90+ days", es: "Artefactos de proyectos sin actividad (git/archivos) desde hace 90+ días", fr: "Artefacts de projets sans activité (git/fichiers) depuis 90+ jours", de: "Artefakte von Projekten ohne Aktivität (Git/Dateien) seit 90+ Tagen", zh: "来自 90 天以上无活动（git/文件）项目的产物") }
+    var unsavedWorkNote: String { s("Tem mudanças não commitadas ou não enviadas ao remoto", "Has uncommitted or unpushed changes", es: "Tiene cambios sin commit o sin push", fr: "Contient des modifications non commitées ou non poussées", de: "Hat nicht committete oder nicht gepushte Änderungen", zh: "有未提交或未推送的更改") }
 
     // MARK: footer
     var selectSafe: String { s("Selecionar seguros", "Select safe", es: "Seleccionar seguros", fr: "Sélectionner les sûrs", de: "Sichere auswählen", zh: "选择安全项") }
