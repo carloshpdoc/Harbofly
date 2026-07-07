@@ -168,6 +168,19 @@ struct L {
     var notifyBelow: String { s("Avisar quando o disco livre cair abaixo de", "Warn when free disk drops below", es: "Avisar cuando el espacio libre baje de", fr: "Prévenir si l'espace libre passe sous", de: "Warnen bei freiem Speicher unter", zh: "当可用空间低于此值时提醒") }
     var shareAnonToggle: String { s("Compartilhar dados de uso anônimos", "Share anonymous usage data", es: "Compartir datos de uso anónimos", fr: "Partager des données d'utilisation anonymes", de: "Anonyme Nutzungsdaten teilen", zh: "分享匿名使用数据") }
     var autoUpdateToggle: String { s("Buscar atualizações automaticamente", "Check for updates automatically", es: "Buscar actualizaciones automáticamente", fr: "Rechercher les mises à jour automatiquement", de: "Automatisch nach Updates suchen", zh: "自动检查更新") }
+
+    // MARK: auto-clean
+    var autoCleanToggle: String { s("Limpar seguros automaticamente", "Auto-clean safe items", es: "Limpiar seguros automáticamente", fr: "Nettoyage auto des éléments sûrs", de: "Sichere automatisch bereinigen", zh: "自动清理安全项") }
+    var autoCleanXcode: String { s("Ao fechar o Xcode", "When Xcode quits", es: "Al cerrar Xcode", fr: "À la fermeture de Xcode", de: "Beim Beenden von Xcode", zh: "退出 Xcode 时") }
+    var autoCleanDaily: String { s("Diariamente", "Daily", es: "A diario", fr: "Chaque jour", de: "Täglich", zh: "每天") }
+    var autoCleanWeekly: String { s("Semanalmente", "Weekly", es: "Semanalmente", fr: "Chaque semaine", de: "Wöchentlich", zh: "每周") }
+    var autoCleanNote: String { s("Caches 🟢 + artifacts de projetos parados (nunca de projetos ativos). Sempre pra Lixeira, e só com 1 GB+ a recuperar.", "🟢 caches + artifacts from idle projects (never active ones). Always to the Trash, and only when 1 GB+ is reclaimable.", es: "Cachés 🟢 + artefactos de proyectos inactivos (nunca de activos). Siempre a la Papelera, y solo con 1 GB+ recuperable.", fr: "Caches 🟢 + artefacts de projets inactifs (jamais actifs). Toujours vers la Corbeille, et seulement à partir de 1 Go récupérable.", de: "🟢 Caches + Artefakte inaktiver Projekte (nie aktiver). Immer in den Papierkorb, und nur ab 1 GB freigebbar.", zh: "🟢 缓存 + 闲置项目的产物（绝不清理活跃项目）。始终移到废纸篓，且仅在可回收超过 1 GB 时执行。") }
+    var autoCleanNotifTitle: String { s("\(AppInfo.name): limpeza automática", "\(AppInfo.name): auto-clean", es: "\(AppInfo.name): limpieza automática", fr: "\(AppInfo.name) : nettoyage automatique", de: "\(AppInfo.name): automatische Bereinigung", zh: "\(AppInfo.name)：自动清理") }
+    func autoCleanNotifBody(size: String, count: Int) -> String {
+        s("\(count) itens (\(size)) foram pra Lixeira.", "\(count) items (\(size)) went to the Trash.",
+          es: "\(count) elementos (\(size)) fueron a la Papelera.", fr: "\(count) éléments (\(size)) placés dans la Corbeille.",
+          de: "\(count) Elemente (\(size)) wurden in den Papierkorb verschoben.", zh: "已将 \(count) 个项目（\(size)）移到废纸篓。")
+    }
     var checkNow: String { s("Buscar agora", "Check now", es: "Buscar ahora", fr: "Vérifier maintenant", de: "Jetzt suchen", zh: "立即检查") }
     var openAtLogin: String { s("Abrir no login", "Open at login", es: "Abrir al iniciar sesión", fr: "Ouvrir à la connexion", de: "Beim Anmelden öffnen", zh: "登录时打开") }
     var supportCta: String { s("Apoiar ☕", "Support ☕", es: "Apoyar ☕", fr: "Soutenir ☕", de: "Unterstützen ☕", zh: "支持 ☕") }

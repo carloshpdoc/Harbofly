@@ -30,6 +30,12 @@ enum Prefs {
     static let defaultThreshold = 0.10
     /// Projeto sem atividade (git/mtime) há mais que isso = "parado".
     static let staleThresholdDays = 90
+    // Auto-clean (opt-in): limpa 🟢 seguros sozinho, sempre pra Lixeira.
+    static let autoCleanEnabled = "autoCleanEnabled"
+    static let autoCleanTrigger = "autoCleanTrigger" // "xcode" | "daily" | "weekly"
+    static let autoCleanLastRun = "autoCleanLastRun"
+    /// Piso: só auto-limpa quando houver pelo menos isso a recuperar.
+    static let autoCleanMinBytes: Int64 = 1_000_000_000
     // Cadência da doação: quem já apoiou nunca mais é incomodado; quem adia
     // é adiado por intervalos crescentes.
     static let hasSupported = "hasSupported"
@@ -102,6 +108,31 @@ final class DiskScanner: ObservableObject {
     private let home = FileManager.default.homeDirectoryForCurrentUser
     private let minBytes: Int64 = 10_000_000 // ignora ruído < 10 MB
 
+    /// true = ao final do scan corrente, roda a limpeza automática.
+    private var pendingAutoClean = false
+    private var autoCleanTimer: Timer?
+
+    init() {
+        // Os triggers do auto-clean vivem aqui (a UI do popover pode nem ter
+        // sido criada ainda; o scanner existe desde o launch).
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.bundleIdentifier == "com.apple.dt.Xcode" else { return }
+            self?.autoCleanIfDue(fromXcodeQuit: true)
+        }
+        autoCleanTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
+            self?.autoCleanIfDue(fromXcodeQuit: false)
+        }
+        // Checagem inicial (ex.: agendamento semanal vencido com o Mac desligado),
+        // com folga pra não competir com o scan de abertura.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+            self?.autoCleanIfDue(fromXcodeQuit: false)
+        }
+    }
+
     func scan() {
         guard !scanning else { return }
         scanning = true
@@ -123,6 +154,10 @@ final class DiskScanner: ObservableObject {
                 let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
                 let recoverable = found.filter { !$0.tier.isReadOnly }.reduce(Int64(0)) { $0 + $1.bytes }
                 Analytics.scanFinished(durationMs: ms, itemCount: found.count, recoverableBytes: recoverable)
+                if self.pendingAutoClean {
+                    self.pendingAutoClean = false
+                    self.performAutoClean()
+                }
             }
         }
     }
@@ -455,6 +490,56 @@ final class DiskScanner: ObservableObject {
         }
     }
 
+    // MARK: auto-clean
+
+    /// Dispara o ciclo se estiver habilitado e "vencido". Xcode-quit roda no
+    /// máx 1x/h; diário/semanal seguem o intervalo. Marca a tentativa mesmo
+    /// abaixo do piso, pra não re-escanear em loop.
+    func autoCleanIfDue(fromXcodeQuit: Bool) {
+        let d = UserDefaults.standard
+        guard d.bool(forKey: Prefs.autoCleanEnabled) else { return }
+        let trigger = d.string(forKey: Prefs.autoCleanTrigger) ?? "xcode"
+        let elapsed = Date().timeIntervalSince1970 - d.double(forKey: Prefs.autoCleanLastRun)
+        if fromXcodeQuit {
+            guard trigger == "xcode", elapsed >= 3_600 else { return }
+        } else {
+            switch trigger {
+            case "daily": guard elapsed >= 86_400 else { return }
+            case "weekly": guard elapsed >= 604_800 else { return }
+            default: return // "xcode" só dispara pelo observer
+            }
+        }
+        pendingAutoClean = true
+        scan()
+    }
+
+    /// Regras de confiança do auto-clean, mais duras que a limpeza manual:
+    /// só 🟢 seguros, NUNCA artifacts de projeto ativo (~/Development só se
+    /// parado 90+ dias), SEMPRE Lixeira (ignora o toggle permanente) e só
+    /// quando houver 1 GB+ a recuperar.
+    private func performAutoClean() {
+        let devRoot = home.appendingPathComponent("Development").path
+        let eligible = targets.filter { t in
+            guard t.tier == .safe, !t.isDocker else { return false }
+            guard t.url.path.hasPrefix(devRoot) else { return true }
+            return (t.staleDays ?? 0) >= Prefs.staleThresholdDays
+        }
+        let total = eligible.reduce(Int64(0)) { $0 + $1.bytes }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Prefs.autoCleanLastRun)
+        guard total >= Prefs.autoCleanMinBytes else { return }
+
+        notifyAutoClean(freed: total, count: eligible.count)
+        delete(eligible, permanently: false)
+    }
+
+    private func notifyAutoClean(freed: Int64, count: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = L10n.autoCleanNotifTitle
+        content.body = L10n.autoCleanNotifBody(size: fmt(freed), count: count)
+        let req = UNNotificationRequest(identifier: "harbofly.autoclean", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
+    }
+
     // MARK: notificação de disco baixo
 
     private var notifyEnabled: Bool {
@@ -508,6 +593,8 @@ struct ContentView: View {
     @AppStorage(Prefs.donateSnoozeUntil) private var donateSnoozeUntil = 0.0
     @AppStorage(Prefs.donateSnoozeCount) private var donateSnoozeCount = 0
     @AppStorage(Prefs.totalFreedBytes) private var totalFreedBytes = 0
+    @AppStorage(Prefs.autoCleanEnabled) private var autoCleanEnabled = false
+    @AppStorage(Prefs.autoCleanTrigger) private var autoCleanTrigger = "xcode"
     @AppStorage(Prefs.analyticsChoiceMade) private var analyticsChoiceMade = false
     @AppStorage(Prefs.analyticsEnabled) private var analyticsEnabled = false
     // Observa a troca manual de idioma: ao mudar, a View re-renderiza e o L10n
@@ -1095,6 +1182,26 @@ struct ContentView: View {
                 .frame(width: 66)
                 .disabled(!notifyEnabled)
                 Spacer()
+            }
+            HStack(spacing: 6) {
+                Toggle(L10n.autoCleanToggle, isOn: $autoCleanEnabled)
+                    .toggleStyle(.checkbox)
+                Picker("", selection: $autoCleanTrigger) {
+                    Text(L10n.autoCleanXcode).tag("xcode")
+                    Text(L10n.autoCleanDaily).tag("daily")
+                    Text(L10n.autoCleanWeekly).tag("weekly")
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(!autoCleanEnabled)
+                Spacer()
+            }
+            if autoCleanEnabled {
+                Text(L10n.autoCleanNote)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
                 Toggle(L10n.shareAnonToggle, isOn: Binding(
