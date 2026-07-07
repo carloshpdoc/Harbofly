@@ -489,6 +489,22 @@ final class DiskScanner: ObservableObject {
                 out.append(CleanTarget(url: url, label: label, detailKey: detail, tier: .info, bytes: b))
             }
         }
+
+        // Espaço "purgeable" (snapshots do Time Machine, caches do sistema):
+        // a diferença entre a capacidade que o macOS LIBERARIA sob demanda
+        // (volumeAvailableCapacityForImportantUsage) e o livre real (statfs).
+        // Explica o clássico "apaguei X GB e o Finder não mostra". URL fresca
+        // a cada scan — resourceValues cacheia por instância de URL.
+        let volume = URL(fileURLWithPath: NSHomeDirectory())
+        if let important = (try? volume.resourceValues(
+            forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage {
+            let (free, _) = diskSpace()
+            let purgeable = important - free
+            if purgeable > minBytes {
+                out.append(CleanTarget(url: home, labelKey: \.purgeableLabel,
+                                       detailKey: \.purgeableDetail, tier: .info, bytes: purgeable))
+            }
+        }
         return out
     }
 
@@ -1253,12 +1269,16 @@ struct ContentView: View {
                     .lineLimit(1).truncationMode(.middle)
                 Text(t.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 HStack(spacing: 12) {
-                    Button {
-                        NSWorkspace.shared.activateFileViewerSelecting([t.url])
-                    } label: {
-                        Label(L10n.revealInFinder, systemImage: "magnifyingglass").font(.caption)
+                    // A linha de purgeable aponta pro volume (home): revelar
+                    // no Finder não diz nada — esconde o botão nesse caso.
+                    if t.url != FileManager.default.homeDirectoryForCurrentUser {
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([t.url])
+                        } label: {
+                            Label(L10n.revealInFinder, systemImage: "magnifyingglass").font(.caption)
+                        }
+                        .buttonStyle(.plain).foregroundStyle(.blue)
                     }
-                    .buttonStyle(.plain).foregroundStyle(.blue)
 
                     // Ação especial do CoreSimulator: 1 clique arma, 2º executa
                     // (simctl delete unavailable é irreversível).
