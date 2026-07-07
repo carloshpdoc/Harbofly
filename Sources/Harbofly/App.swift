@@ -69,10 +69,19 @@ enum Tier: String {
 struct CleanTarget: Identifiable {
     let id = UUID()
     let url: URL
-    let label: String
-    let detail: String
+    /// Rótulo fixo (nomes de projeto/pasta). Rows 100% localizadas (Docker)
+    /// usam labelKey no lugar.
+    var label = ""
+    /// Rótulo localizado, resolvido na render — troca junto com o idioma.
+    var labelKey: KeyPath<L, String>? = nil
+    /// Descrição como referência (não String): resolvida na render pra
+    /// acompanhar a troca de idioma sem precisar de re-scan.
+    let detailKey: KeyPath<L, String>
     let tier: Tier
     var bytes: Int64
+
+    var displayLabel: String { labelKey.map { L10n[keyPath: $0] } ?? label }
+    var detail: String { L10n[keyPath: detailKey] }
     /// Dias desde a última atividade do projeto dono (só artifacts de dev;
     /// nil quando não se aplica ou não deu pra medir).
     var staleDays: Int? = nil
@@ -263,7 +272,7 @@ final class DiskScanner: ObservableObject {
                         out.append(CleanTarget(
                             url: item,
                             label: "\(projectDir.lastPathComponent)/\(item.lastPathComponent)",
-                            detail: L10n.devArtifact,
+                            detailKey: \.devArtifact,
                             tier: .safe,
                             bytes: b,
                             staleDays: stale,
@@ -316,7 +325,7 @@ final class DiskScanner: ObservableObject {
                 }
             }
             out.append(CleanTarget(url: item, label: "DerivedData/\(project)",
-                                   detail: L10n.xcodeDerived, tier: .safe, bytes: b,
+                                   detailKey: \.xcodeDerived, tier: .safe, bytes: b,
                                    staleDays: stale, unsavedWork: unsaved))
         }
         return out
@@ -402,41 +411,41 @@ final class DiskScanner: ObservableObject {
     /// (pesos de modelo do Ollama/LM Studio/HuggingFace, que passam de
     /// dezenas de GB fácil).
     private func scanLibrary() -> [CleanTarget] {
-        let specs: [(String, String, Tier, String)] = [
+        let specs: [(String, String, Tier, KeyPath<L, String>)] = [
             // Xcode & Apple (DerivedData tem scanner próprio, por projeto)
-            ("Library/Developer/Xcode/iOS DeviceSupport", "iOS DeviceSupport", .caution, L10n.iosDeviceSupport),
-            ("Library/Developer/Xcode/Archives", "Xcode Archives", .caution, L10n.xcodeArchives),
-            ("Library/Developer/XcodeBuildMCP/workspaces", "workspaces", .safe, L10n.xcodeBuildMCP),
-            ("Library/Caches/org.swift.swiftpm", "org.swift.swiftpm", .safe, L10n.swiftpmCache),
-            ("Library/Caches/CocoaPods", "CocoaPods", .safe, L10n.pkgCache),
+            ("Library/Developer/Xcode/iOS DeviceSupport", "iOS DeviceSupport", .caution, \.iosDeviceSupport),
+            ("Library/Developer/Xcode/Archives", "Xcode Archives", .caution, \.xcodeArchives),
+            ("Library/Developer/XcodeBuildMCP/workspaces", "workspaces", .safe, \.xcodeBuildMCP),
+            ("Library/Caches/org.swift.swiftpm", "org.swift.swiftpm", .safe, \.swiftpmCache),
+            ("Library/Caches/CocoaPods", "CocoaPods", .safe, \.pkgCache),
             // Package managers / linguagens
-            ("Library/Caches/Homebrew", "Homebrew", .safe, L10n.homebrewCache),
-            ("Library/Caches/Yarn", "Yarn", .safe, L10n.yarnCache),
-            ("Library/Caches/pnpm", "pnpm", .safe, L10n.pkgCache),
-            (".npm", "npm", .safe, L10n.pkgCache),
-            (".bun/install/cache", "Bun", .safe, L10n.pkgCache),
-            ("Library/Caches/pip", "pip", .safe, L10n.pipCache),
-            ("Library/Caches/uv", "uv", .safe, L10n.pkgCache),
-            ("Library/Caches/go-build", "Go build", .safe, L10n.devArtifact),
-            ("go/pkg/mod", "Go modules", .caution, L10n.depsCache),
-            (".gradle/caches", "Gradle", .caution, L10n.depsCache),
-            (".m2/repository", "Maven", .caution, L10n.depsCache),
-            (".cargo/registry", "Cargo", .caution, L10n.depsCache),
-            (".pub-cache", "Flutter pub", .caution, L10n.depsCache),
+            ("Library/Caches/Homebrew", "Homebrew", .safe, \.homebrewCache),
+            ("Library/Caches/Yarn", "Yarn", .safe, \.yarnCache),
+            ("Library/Caches/pnpm", "pnpm", .safe, \.pkgCache),
+            (".npm", "npm", .safe, \.pkgCache),
+            (".bun/install/cache", "Bun", .safe, \.pkgCache),
+            ("Library/Caches/pip", "pip", .safe, \.pipCache),
+            ("Library/Caches/uv", "uv", .safe, \.pkgCache),
+            ("Library/Caches/go-build", "Go build", .safe, \.devArtifact),
+            ("go/pkg/mod", "Go modules", .caution, \.depsCache),
+            (".gradle/caches", "Gradle", .caution, \.depsCache),
+            (".m2/repository", "Maven", .caution, \.depsCache),
+            (".cargo/registry", "Cargo", .caution, \.depsCache),
+            (".pub-cache", "Flutter pub", .caution, \.depsCache),
             // Editores / IDEs
-            ("Library/Application Support/Code/CachedData", "VS Code (CachedData)", .safe, L10n.editorCache),
-            ("Library/Application Support/Code/Cache", "VS Code (Cache)", .safe, L10n.editorCache),
-            ("Library/Application Support/Cursor/CachedData", "Cursor (CachedData)", .safe, L10n.editorCache),
-            ("Library/Application Support/Cursor/Cache", "Cursor (Cache)", .safe, L10n.editorCache),
-            ("Library/Caches/JetBrains", "JetBrains", .caution, L10n.jetbrainsCache),
+            ("Library/Application Support/Code/CachedData", "VS Code (CachedData)", .safe, \.editorCache),
+            ("Library/Application Support/Code/Cache", "VS Code (Cache)", .safe, \.editorCache),
+            ("Library/Application Support/Cursor/CachedData", "Cursor (CachedData)", .safe, \.editorCache),
+            ("Library/Application Support/Cursor/Cache", "Cursor (Cache)", .safe, \.editorCache),
+            ("Library/Caches/JetBrains", "JetBrains", .caution, \.jetbrainsCache),
             // Ferramentas de IA (pesos de modelo)
-            (".ollama/models", "Ollama", .caution, L10n.aiModels),
-            (".cache/huggingface", "Hugging Face", .caution, L10n.aiModels),
-            (".lmstudio/models", "LM Studio", .caution, L10n.aiModels),
-            (".cache/lm-studio", "LM Studio (legado)", .caution, L10n.aiModels),
+            (".ollama/models", "Ollama", .caution, \.aiModels),
+            (".cache/huggingface", "Hugging Face", .caution, \.aiModels),
+            (".lmstudio/models", "LM Studio", .caution, \.aiModels),
+            (".cache/lm-studio", "LM Studio (legado)", .caution, \.aiModels),
             // Outros
-            ("Library/Caches/ms-playwright", "ms-playwright", .caution, L10n.playwrightCache),
-            ("Library/Caches/Google", "Google", .caution, L10n.googleCache),
+            ("Library/Caches/ms-playwright", "ms-playwright", .caution, \.playwrightCache),
+            ("Library/Caches/Google", "Google", .caution, \.googleCache),
         ]
         var out: [CleanTarget] = []
         for (rel, label, tier, detail) in specs {
@@ -444,7 +453,7 @@ final class DiskScanner: ObservableObject {
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             let b = size(of: url)
             if b > minBytes {
-                out.append(CleanTarget(url: url, label: label, detail: detail, tier: tier, bytes: b))
+                out.append(CleanTarget(url: url, label: label, detailKey: detail, tier: tier, bytes: b))
             }
         }
         return out
@@ -453,12 +462,12 @@ final class DiskScanner: ObservableObject {
     /// Tier informativo (só leitura): pastas grandes que o app NÃO apaga, mas
     /// mostra pra você saber onde o espaço está e agir manualmente.
     private func scanInfo() -> [CleanTarget] {
-        let specs: [(String, String, String)] = [
-            ("Library/Developer/CoreSimulator", "CoreSimulator", L10n.coreSimulatorDetail),
-            ("Library/Application Support", "Application Support", L10n.appSupportDetail),
-            ("Downloads", "Downloads", L10n.downloadsDetail),
-            ("Documents", "Documents", L10n.documentsDetail),
-            ("Desktop", "Desktop", L10n.desktopDetail),
+        let specs: [(String, String, KeyPath<L, String>)] = [
+            ("Library/Developer/CoreSimulator", "CoreSimulator", \.coreSimulatorDetail),
+            ("Library/Application Support", "Application Support", \.appSupportDetail),
+            ("Downloads", "Downloads", \.downloadsDetail),
+            ("Documents", "Documents", \.documentsDetail),
+            ("Desktop", "Desktop", \.desktopDetail),
         ]
         var out: [CleanTarget] = []
         for (rel, label, detail) in specs {
@@ -466,7 +475,7 @@ final class DiskScanner: ObservableObject {
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             let b = size(of: url)
             if b > minBytes {
-                out.append(CleanTarget(url: url, label: label, detail: detail, tier: .info, bytes: b))
+                out.append(CleanTarget(url: url, label: label, detailKey: detail, tier: .info, bytes: b))
             }
         }
         return out
@@ -481,12 +490,12 @@ final class DiskScanner: ObservableObject {
         case .running(let reclaimable, let image):
             guard reclaimable > minBytes else { return [] }
             let url = image ?? DockerEngine.binary() ?? home
-            return [CleanTarget(url: url, label: L10n.dockerLabel, detail: L10n.dockerDetail,
+            return [CleanTarget(url: url, labelKey: \.dockerLabel, detailKey: \.dockerDetail,
                                 tier: .caution, bytes: reclaimable, isDocker: true)]
         case .stopped(let bytes, let image):
             guard bytes > minBytes, let image = image else { return [] }
-            return [CleanTarget(url: image, label: L10n.dockerStoppedLabel,
-                                detail: L10n.dockerStoppedDetail, tier: .info, bytes: bytes)]
+            return [CleanTarget(url: image, labelKey: \.dockerStoppedLabel,
+                                detailKey: \.dockerStoppedDetail, tier: .info, bytes: bytes)]
         }
     }
 
@@ -1071,7 +1080,7 @@ struct ContentView: View {
                 .foregroundStyle(selection.contains(t.id) ? Color.accentColor : .secondary)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(t.label).font(.headline).lineLimit(1)
+                    Text(t.displayLabel).font(.headline).lineLimit(1)
                     if t.tier == .caution {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption).foregroundStyle(.orange)
@@ -1109,7 +1118,7 @@ struct ContentView: View {
                 .font(.title3).foregroundStyle(.blue)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(t.label).font(.headline).lineLimit(1)
+                    Text(t.displayLabel).font(.headline).lineLimit(1)
                     Spacer()
                     Text(fmt(t.bytes)).font(.headline.monospacedDigit())
                 }
