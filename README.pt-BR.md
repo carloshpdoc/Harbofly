@@ -41,7 +41,14 @@ Instalou pelo DMG? Rode `/Applications/Harbofly.app/Contents/MacOS/Harbofly scan
 
 ## Features
 
-- **Auto-discovery**: varre `~/Development` procurando `build`, `.build`, `node_modules`, `Pods`, `DerivedData` e os caches conhecidos de `~/Library`. Zero config de path.
+- **Auto-discovery**: varre `~/Development` procurando `build`, `.build`, `node_modules`, `Pods`, mais 25+ locais de cache conhecidos — package managers (npm, pnpm, Bun, Gradle, Maven, Cargo, Go, Flutter, pip, uv, CocoaPods, Homebrew…), editores (VS Code, Cursor, JetBrains) e **ferramentas de IA** (pesos de modelo do Ollama, Hugging Face, LM Studio). Zero config de path.
+- **DerivedData por projeto**: a pasta de build de cada projeto Xcode aparece separada, resolvida pro workspace dono.
+- **Detecção de projetos parados**: projeto sem atividade há 90+ dias ganha selo — e alerta vermelho se tiver **trabalho não commitado ou não pushado** (lido do git local, 100% offline).
+- **Auto-clean (opt-in, grátis)**: limpa os seguros ao fechar o Xcode, com disco baixo, diário ou semanal. Você escolhe o escopo (caches de ferramentas → projetos parados → tudo 🟢) e o mínimo. Sempre pela Lixeira, com notificação e histórico.
+- **Simuladores antigos em 1 clique**: `simctl delete unavailable` de dentro do app, com confirmação em dois passos.
+- **Espaço purgeável do macOS, explicado**: mostra quanto os snapshots do Time Machine e caches de sistema ocupam — o clássico "apaguei 20 GB e o Finder não mostra".
+- **6 idiomas**: Português, English, Español, Français, Deutsch, 中文 — com troca instantânea.
+- **Feedback in-app**: bug ou ideia vai direto pro mantenedor, sem precisar de conta.
 - **Barra de disco** no topo com cor por pressão: verde → laranja (<20%) → **vermelho (<10%)**.
 - **"Recuperável: X GB"**: soma do que dá pra limpar agora.
 - **Tiers de risco:**

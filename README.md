@@ -41,7 +41,14 @@ Installed from the DMG? Run `/Applications/Harbofly.app/Contents/MacOS/Harbofly 
 
 ## Features
 
-- **Auto-discovery**: scans `~/Development` for `build`, `.build`, `node_modules`, `Pods`, `DerivedData` and the known caches in `~/Library`. Zero path config.
+- **Auto-discovery**: scans `~/Development` for `build`, `.build`, `node_modules`, `Pods`, plus 25+ known cache locations — package managers (npm, pnpm, Bun, Gradle, Maven, Cargo, Go, Flutter, pip, uv, CocoaPods, Homebrew…), editors (VS Code, Cursor, JetBrains) and **AI tools** (Ollama, Hugging Face, LM Studio model weights). Zero path config.
+- **Per-project DerivedData**: each Xcode project's build folder shows up on its own, resolved to the workspace that owns it.
+- **Stale project detection**: projects with no activity for 90+ days get a badge — and a red warning if they hold **uncommitted or unpushed work** (read from your local git, fully offline).
+- **Auto-clean (opt-in, free)**: clean safe items when Xcode quits, when disk runs low, daily or weekly. You pick the scope (tool caches → idle projects → everything 🟢) and the minimum. Always through the Trash, with a notification and history.
+- **Old simulators in one click**: `simctl delete unavailable` from the app, with a two-step confirm.
+- **macOS purgeable space, explained**: shows how much space Time Machine snapshots and system caches hold — the classic "I deleted 20 GB and Finder shows nothing".
+- **6 languages**: Português, English, Español, Français, Deutsch, 中文 — switching instantly.
+- **In-app feedback**: a bug or idea goes straight to the maintainer, no account needed.
 - **Disk bar** at the top, colored by pressure: green → orange (<20%) → **red (<10%)**.
 - **"Recoverable: X GB"**: the total you can free right now.
 - **Risk tiers:**
