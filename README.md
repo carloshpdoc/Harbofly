@@ -24,6 +24,21 @@ brew install --cask carloshpdoc/tap/harbofly
 
 Or download the notarized `.dmg` at **[harbofly.app](https://harbofly.app)**.
 
+## CLI
+
+The app binary doubles as a CLI — the Homebrew install exposes it as `harbofly`:
+
+```bash
+harbofly scan                # list caches/artifacts with size and risk tier
+harbofly scan --json         # machine-readable output
+harbofly clean --dry-run     # preview what a safe clean would move to the Trash
+harbofly clean               # move every 🟢 safe item to the Trash
+harbofly clean --stale-only  # only artifacts from projects idle for 90+ days
+```
+
+The CLI only ever touches the 🟢 safe tier and always goes through the Trash.
+Installed from the DMG? Run `/Applications/Harbofly.app/Contents/MacOS/Harbofly scan`.
+
 ## Features
 
 - **Auto-discovery**: scans `~/Development` for `build`, `.build`, `node_modules`, `Pods`, `DerivedData` and the known caches in `~/Library`. Zero path config.

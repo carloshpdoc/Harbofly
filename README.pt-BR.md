@@ -24,6 +24,21 @@ brew install --cask carloshpdoc/tap/harbofly
 
 Ou baixe o `.dmg` notarizado em **[harbofly.app](https://harbofly.app)**.
 
+## CLI
+
+O binário do app também é um CLI — a instalação via Homebrew expõe o comando `harbofly`:
+
+```bash
+harbofly scan                # lista caches/artifacts com tamanho e tier de risco
+harbofly scan --json         # saída pra máquina
+harbofly clean --dry-run     # prévia do que a limpeza segura mandaria pra Lixeira
+harbofly clean               # manda todos os itens 🟢 seguros pra Lixeira
+harbofly clean --stale-only  # só artifacts de projetos parados há 90+ dias
+```
+
+O CLI só toca no tier 🟢 seguro e sempre passa pela Lixeira.
+Instalou pelo DMG? Rode `/Applications/Harbofly.app/Contents/MacOS/Harbofly scan`.
+
 ## Features
 
 - **Auto-discovery**: varre `~/Development` procurando `build`, `.build`, `node_modules`, `Pods`, `DerivedData` e os caches conhecidos de `~/Library`. Zero config de path.
