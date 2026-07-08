@@ -12,8 +12,19 @@ enum AppInfo {
     /// id da Window scene principal (usado também pra reconhecer a NSWindow).
     static let mainWindowID = "main"
     // Lê do próprio bundle (setado pelo make-app.sh). "dev" quando roda via `swift run`.
-    static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev" }
-    static var build: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0" }
+    // Via symlink (ex.: /opt/homebrew/bin/harbofly, criado pelo cask), o Bundle.main
+    // aponta pro diretório do symlink e não acha o Info.plist — resolvemos o
+    // executável real e derivamos o .app a partir dele.
+    private static let bundle: Bundle = {
+        if Bundle.main.infoDictionary?["CFBundleShortVersionString"] != nil { return Bundle.main }
+        let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let appURL = exe.deletingLastPathComponent()   // MacOS
+            .deletingLastPathComponent()               // Contents
+            .deletingLastPathComponent()               // Harbofly.app
+        return Bundle(url: appURL) ?? Bundle.main
+    }()
+    static var version: String { bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev" }
+    static var build: String { bundle.infoDictionary?["CFBundleVersion"] as? String ?? "0" }
 }
 
 /// Apoio (tip jar).
@@ -120,6 +131,9 @@ final class DiskScanner: ObservableObject {
     @Published var lastFreedBytes: Int64 = 0
     @Published var lastDeletePermanent = false
     @Published var justCleaned = false
+    @Published var deleting = false
+    @Published var deletingDone = 0
+    @Published var deletingTotal = 0
 
     /// Evita disparar a notificação de disco baixo repetidamente: só notifica
     /// quando o espaço livre CRUZA pra baixo do limite.
@@ -156,7 +170,8 @@ final class DiskScanner: ObservableObject {
     }
 
     func scan() {
-        guard !scanning else { return }
+        // Não escanear no meio de uma limpeza: o rescan final do delete() reconcilia.
+        guard !scanning, !deleting else { return }
         scanning = true
         let startedAt = Date()
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -187,6 +202,10 @@ final class DiskScanner: ObservableObject {
     /// Itens read-only (tier informativo) são ignorados por segurança.
     func delete(_ items: [CleanTarget], permanently: Bool) {
         let deletable = items.filter { !$0.tier.isReadOnly }
+        guard !deletable.isEmpty else { return }
+        deleting = true
+        deletingDone = 0
+        deletingTotal = deletable.count
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var freed: Int64 = 0
             var count = 0
@@ -209,6 +228,12 @@ final class DiskScanner: ObservableObject {
                     let key = item.isDocker ? "docker" : item.url.lastPathComponent
                     byCategory[key, default: 0] += item.bytes
                 }
+                // Feedback imediato: some da lista assim que o item vai pra
+                // Lixeira, sem esperar o rescan completo do final.
+                DispatchQueue.main.async {
+                    self?.deletingDone += 1
+                    if ok { self?.targets.removeAll { $0.id == item.id } }
+                }
             }
             let freedFinal = freed, countFinal = count, categories = byCategory
             DispatchQueue.main.async {
@@ -218,6 +243,7 @@ final class DiskScanner: ObservableObject {
                 self?.lastFreedBytes = freedFinal
                 self?.lastDeletePermanent = permanently
                 self?.justCleaned = true
+                self?.deleting = false
                 Analytics.deleteConfirmed(mode: permanently ? "permanent" : "trash",
                                           freedBytes: freedFinal, itemCount: countFinal, byCategory: categories)
                 self?.scan()
@@ -1166,7 +1192,7 @@ struct ContentView: View {
                 Image(systemName: "internaldrive")
                 Text(AppInfo.name).font(.headline)
                 Spacer()
-                if scanner.scanning { ProgressView().controlSize(.small) }
+                if scanner.scanning || scanner.deleting { ProgressView().controlSize(.small) }
                 Button { openMainWindow() } label: {
                     Image(systemName: "macwindow")
                 }
@@ -1340,19 +1366,28 @@ struct ContentView: View {
                 .help(L10n.clearSelection)
                 .disabled(selection.isEmpty)
                 Spacer()
-                Button {
-                    Analytics.deleteClicked(mode: deletePermanently ? "permanent" : "trash",
-                                            itemCount: selection.count)
-                    confirming = true
-                } label: {
-                    Text(selection.isEmpty ? L10n.delete : L10n.deleteWithSize(fmt(selectedBytes)))
+                if scanner.deleting {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(L10n.cleaningProgress(done: scanner.deletingDone,
+                                                   total: scanner.deletingTotal))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button {
+                        Analytics.deleteClicked(mode: deletePermanently ? "permanent" : "trash",
+                                                itemCount: selection.count)
+                        confirming = true
+                    } label: {
+                        Text(selection.isEmpty ? L10n.delete : L10n.deleteWithSize(fmt(selectedBytes)))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(selection.isEmpty)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .disabled(selection.isEmpty)
             }
             HStack {
-                Button(L10n.rescan) { scanner.scan() }.disabled(scanner.scanning)
+                Button(L10n.rescan) { scanner.scan() }.disabled(scanner.scanning || scanner.deleting)
                 if let d = scanner.lastScan {
                     Text(L10n.updatedAt(d.formatted(date: .omitted, time: .shortened)))
                         .font(.caption2).foregroundStyle(.secondary)

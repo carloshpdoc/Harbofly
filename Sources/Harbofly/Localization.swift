@@ -139,6 +139,11 @@ struct L {
 
     // MARK: lista
     var scanning: String { s("Escaneando…", "Scanning…", es: "Escaneando…", fr: "Analyse…", de: "Scanne…", zh: "扫描中…") }
+    func cleaningProgress(done: Int, total: Int) -> String {
+        s("Limpando… \(done)/\(total)", "Cleaning… \(done)/\(total)",
+          es: "Limpiando… \(done)/\(total)", fr: "Nettoyage… \(done)/\(total)",
+          de: "Aufräumen… \(done)/\(total)", zh: "清理中… \(done)/\(total)")
+    }
     var nothingFound: String { s("Nada relevante encontrado 🎉", "Nothing relevant found 🎉", es: "No se encontró nada relevante 🎉", fr: "Rien de pertinent trouvé 🎉", de: "Nichts Relevantes gefunden 🎉", zh: "没有发现可清理的内容 🎉") }
     var tierSafe: String { s("🟢 Seguro: regenera sozinho", "🟢 Safe: regenerates itself", es: "🟢 Seguro: se regenera solo", fr: "🟢 Sûr : se régénère tout seul", de: "🟢 Sicher: regeneriert sich selbst", zh: "🟢 安全：会自动重新生成") }
     var tierCaution: String { s("🟡 Cuidado: recria, mas custa", "🟡 Caution: rebuilds, but costs", es: "🟡 Cuidado: se recrea, pero cuesta", fr: "🟡 Attention : se recrée, mais ça coûte", de: "🟡 Vorsicht: wird neu erstellt, kostet aber", zh: "🟡 谨慎：可重建，但有代价") }
