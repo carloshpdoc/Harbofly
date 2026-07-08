@@ -132,7 +132,9 @@ final class DiskScanner: ObservableObject {
     private var pendingAutoClean = false
     private var autoCleanTimer: Timer?
 
-    init() {
+    /// `autoTriggers: false` = modo CLI: sem observers, timers ou notificações.
+    init(autoTriggers: Bool = true) {
+        guard autoTriggers else { return }
         // Os triggers do auto-clean vivem aqui (a UI do popover pode nem ter
         // sido criada ainda; o scanner existe desde o launch).
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -159,11 +161,8 @@ final class DiskScanner: ObservableObject {
         let startedAt = Date()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
-            self.unsavedCache.removeAll()
             let (free, total) = self.diskSpace()
-            var found = self.scanDevelopment() + self.scanDerivedData() + self.scanLibrary()
-                + self.scanInfo() + self.scanDocker()
-            found.sort { $0.bytes > $1.bytes }
+            let found = self.collectAll()
             DispatchQueue.main.async {
                 self.freeBytes = free
                 self.totalBytes = total
@@ -226,9 +225,19 @@ final class DiskScanner: ObservableObject {
         }
     }
 
+    /// Varredura completa, síncrona — compartilhada entre o scan() assíncrono
+    /// da UI e o modo CLI.
+    func collectAll() -> [CleanTarget] {
+        unsavedCache.removeAll()
+        var found = scanDevelopment() + scanDerivedData() + scanLibrary()
+            + scanInfo() + scanDocker()
+        found.sort { $0.bytes > $1.bytes }
+        return found
+    }
+
     // MARK: private
 
-    private func diskSpace() -> (Int64, Int64) {
+    func diskSpace() -> (Int64, Int64) {
         // statfs = leitura direta do filesystem, sem o cache de resourceValues
         // (volumeAvailableCapacityForImportantUsage fica preso à instância da URL
         // e não refletia a deleção na hora).
@@ -404,15 +413,16 @@ final class DiskScanner: ObservableObject {
         }
         var probe = dir
         for _ in 0..<4 {
+            // A home (e acima) nunca é raiz de projeto — um ~/.git solto
+            // (dotfiles) contaminaria a data de projetos sem git.
+            guard probe.path != home.path, probe.path != "/" else { break }
             let git = probe.appendingPathComponent(".git")
             if fm.fileExists(atPath: git.path) {
                 let dates = [git.appendingPathComponent("index"),
                              git.appendingPathComponent("HEAD")].compactMap(mtime)
                 if let latest = dates.max() { return latest }
             }
-            let parent = probe.deletingLastPathComponent()
-            guard parent.path != probe.path, probe.path != home.path else { break }
-            probe = parent
+            probe = probe.deletingLastPathComponent()
         }
         return mtime(dir)
     }
@@ -1550,6 +1560,20 @@ struct MenuBarLabel: View {
 }
 
 @main
+enum Main {
+    static func main() {
+        // Modo CLI: `harbofly scan|clean|version` (symlink do Homebrew ou o
+        // binário dentro do .app chamado direto). Args desconhecidos (flags
+        // do Finder/Xcode etc.) seguem pro app normal.
+        let args = Array(CommandLine.arguments.dropFirst())
+        if let cmd = args.first,
+           ["scan", "clean", "help", "--help", "-h", "version", "--version"].contains(cmd) {
+            exit(CLI.run(args))
+        }
+        HarboflyApp.main()
+    }
+}
+
 struct HarboflyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var scanner = DiskScanner()
