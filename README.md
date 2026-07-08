@@ -12,6 +12,20 @@ It was born from a real pain: an iOS/Android dev Mac piles up tens of GB of buil
 
 Free · Open source · Apple-notarized · Privacy-first (opt-in, anonymous analytics).
 
+<p align="center">
+  <img src="Assets/demo.gif" width="440" alt="Harbofly selecting all safe items and freeing 85 GB in one click" />
+</p>
+<p align="center">
+  <sub>▶ Full demo at <a href="https://harbofly.app">harbofly.app</a></sub>
+</p>
+
+<p align="center">
+  <img src="Assets/screenshot-stale.png" width="470" alt="Idle project detection: project idle for 5 months, with a warning about uncommitted or unpushed changes" />
+</p>
+<p align="center">
+  <sub>It knows which projects you abandoned — and warns you if they still hold unpushed work.</sub>
+</p>
+
 ## Featured
 
 Listed on **[Awesome Mac](https://github.com/jaywcjlove/awesome-mac)**, the curated directory of standout macOS apps, and shared by its maintainer [@jaywcjlove](https://twitter.com/jaywcjlove). It's described there as *"a menu bar app that auto-discovers and frees the disk space dev build artifacts and caches hog."*

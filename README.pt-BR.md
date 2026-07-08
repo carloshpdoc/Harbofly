@@ -12,6 +12,20 @@ Nasceu de uma dor real: um Mac de dev iOS/Android acumula dezenas de GB em build
 
 Grátis · Open source · Notarizado pela Apple · Foco em privacidade (analytics anônimo, opt-in).
 
+<p align="center">
+  <img src="Assets/demo.gif" width="440" alt="Harbofly selecionando todos os itens seguros e liberando 85 GB em um clique" />
+</p>
+<p align="center">
+  <sub>▶ Demo completo em <a href="https://harbofly.app">harbofly.app</a></sub>
+</p>
+
+<p align="center">
+  <img src="Assets/screenshot-stale.png" width="470" alt="Detecção de projeto parado: 5 meses sem atividade, com aviso de mudanças não commitadas ou não enviadas" />
+</p>
+<p align="center">
+  <sub>Ele sabe quais projetos você abandonou — e avisa se ainda têm trabalho não pushado.</sub>
+</p>
+
 ## Featured
 
 Listado no **[Awesome Mac](https://github.com/jaywcjlove/awesome-mac)**, o diretório curado dos melhores apps de macOS, e compartilhado pelo mantenedor [@jaywcjlove](https://twitter.com/jaywcjlove). Descrito por lá como *"um app de barra de menu que descobre sozinho e libera o espaço que artefatos e caches de build de dev ocupam."*
