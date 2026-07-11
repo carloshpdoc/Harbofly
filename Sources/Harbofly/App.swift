@@ -685,10 +685,15 @@ final class DiskScanner: ObservableObject {
 
 // MARK: - UI
 
+/// Painel ativo do popover/janela: limpeza de disco ou busca de duplicatas.
+enum Pane { case cleaner, duplicates }
+
 struct ContentView: View {
     @ObservedObject var scanner: DiskScanner
     @ObservedObject var updater: Updater
+    @ObservedObject var duplicates: DuplicateScanner
     @Environment(\.openWindow) private var openWindow
+    @State private var pane: Pane = .cleaner
     @State private var selection = Set<UUID>()
     @State private var confirming = false
     @State private var confirmingSimDelete = false
@@ -763,11 +768,21 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             VStack(alignment: .leading, spacing: 10) {
-                header
-                Divider()
-                listSection
-                Divider()
-                footer
+                Picker("", selection: $pane) {
+                    Text(L10n.paneCleaner).tag(Pane.cleaner)
+                    Text(L10n.paneDuplicates).tag(Pane.duplicates)
+                }
+                .pickerStyle(.segmented).labelsHidden()
+
+                if pane == .cleaner {
+                    header
+                    Divider()
+                    listSection
+                    Divider()
+                    footer
+                } else {
+                    DuplicatesView(scanner: duplicates)
+                }
             }
             .padding(12)
             .disabled(confirming || showSupport || showFeedback || !analyticsChoiceMade)
@@ -1602,7 +1617,7 @@ enum Main {
         // do Finder/Xcode etc.) seguem pro app normal.
         let args = Array(CommandLine.arguments.dropFirst())
         if let cmd = args.first,
-           ["scan", "clean", "help", "--help", "-h", "version", "--version"].contains(cmd) {
+           ["scan", "clean", "dups", "duplicates", "help", "--help", "-h", "version", "--version"].contains(cmd) {
             exit(CLI.run(args))
         }
         HarboflyApp.main()
@@ -1613,17 +1628,20 @@ struct HarboflyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var scanner = DiskScanner()
     @StateObject private var updater = Updater()
+    // Compartilhado entre as duas cenas: preserva o resultado do scan de
+    // duplicatas ao alternar barra de menu ↔ janela.
+    @StateObject private var duplicates = DuplicateScanner()
 
     var body: some Scene {
         MenuBarExtra {
-            ContentView(scanner: scanner, updater: updater)
+            ContentView(scanner: scanner, updater: updater, duplicates: duplicates)
         } label: {
             MenuBarLabel(scanner: scanner)
         }
         .menuBarExtraStyle(.window)
 
         Window(AppInfo.name, id: AppInfo.mainWindowID) {
-            ContentView(scanner: scanner, updater: updater)
+            ContentView(scanner: scanner, updater: updater, duplicates: duplicates)
                 .fixedSize()
         }
         .windowResizability(.contentSize)

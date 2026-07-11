@@ -12,6 +12,12 @@ enum CLI {
         case "clean":
             return clean(dryRun: args.contains("--dry-run"),
                          staleOnly: args.contains("--stale-only"))
+        case "dups", "duplicates":
+            let paths = args.dropFirst().filter { !$0.hasPrefix("-") }
+            return dups(paths: Array(paths),
+                        apply: args.contains("--apply"),
+                        permanent: args.contains("--permanent"),
+                        json: args.contains("--json"))
         case "version", "--version":
             print("\(AppInfo.name) \(AppInfo.version) (build \(AppInfo.build))")
             return 0
@@ -97,6 +103,68 @@ enum CLI {
         return 0
     }
 
+    /// Duplicatas por conteúdo. Sem pastas = presets pessoais. Dry-run por
+    /// padrão; `--apply` manda os não-keepers pra Lixeira (o keeper sempre fica).
+    private static func dups(paths: [String], apply: Bool, permanent: Bool, json: Bool) -> Int32 {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let roots: [URL] = paths.isEmpty
+            ? ["Downloads", "Documents", "Desktop", "Pictures"].map { home.appendingPathComponent($0) }
+            : paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+        let existing = roots.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !existing.isEmpty else {
+            FileHandle.standardError.write(Data("No folders to scan.\n".utf8))
+            return 64
+        }
+
+        let scanner = DuplicateScanner()
+        let groups = scanner.findDuplicates(roots: existing) { line in
+            if !json { FileHandle.standardError.write(Data("\(line)\n".utf8)) }
+        }
+        let reclaimable = groups.reduce(Int64(0)) { $0 + $1.reclaimable }
+
+        if json {
+            let rows: [[String: Any]] = groups.map { g in
+                ["hash": g.hash, "size": g.size, "reclaimable": g.reclaimable,
+                 "keeper": g.files.first(where: { $0.isKeeper })?.url.path ?? "",
+                 "duplicates": g.removable.map { $0.url.path }]
+            }
+            let payload: [String: Any] = ["groups": rows, "reclaimableBytes": reclaimable]
+            if let data = try? JSONSerialization.data(withJSONObject: payload,
+                                                      options: [.prettyPrinted, .sortedKeys]) {
+                print(String(data: data, encoding: .utf8) ?? "{}")
+            }
+            return 0
+        }
+
+        if groups.isEmpty { print("No duplicates found."); return 0 }
+        for g in groups {
+            print("\n\(pad(fmt(g.size))) × \(g.files.count)  reclaim \(fmt(g.reclaimable))  sha256:\(g.hash.prefix(12))")
+            for f in g.files {
+                let mark = f.isKeeper ? "keep " : (apply ? "TRASH" : "dup  ")
+                print("  \(mark) \(relPath(f.url))")
+            }
+        }
+        print("\n\(groups.count) group(s) — reclaimable: \(fmt(reclaimable))")
+
+        guard apply else {
+            print("(dry-run — pass --apply to move duplicates to the Trash; the keeper stays.)")
+            return 0
+        }
+        var freed: Int64 = 0, n = 0
+        for g in groups {
+            for f in g.removable {
+                let ok = permanent
+                    ? (try? FileManager.default.removeItem(at: f.url)) != nil
+                    : (try? FileManager.default.trashItem(at: f.url, resultingItemURL: nil)) != nil
+                if ok { freed += f.size; n += 1 }
+            }
+        }
+        print(permanent
+              ? "Deleted \(n) file(s), freed \(fmt(freed))."
+              : "Moved \(n) file(s) to the Trash, freed \(fmt(freed)) (recoverable).")
+        return 0
+    }
+
     private static func printHelp() {
         print("""
         \(AppInfo.name) \(AppInfo.version) — dev disk cleaner (CLI mode)
@@ -105,6 +173,10 @@ enum CLI {
           harbofly scan [--json]           list caches/artifacts with size and risk tier
           harbofly clean [--dry-run]       move all 🟢 safe items to the Trash
                         [--stale-only]     …only from projects idle for 90+ days
+          harbofly dups [folders...]       find duplicate files by content (SHA-256
+                        [--apply]          + byte-verify); --apply trashes non-keepers
+                        [--permanent]      delete instead of Trash
+                        [--json]           no folders = Downloads/Documents/Desktop/Pictures
           harbofly version                 print version
 
         Everything goes to the Trash (recoverable). 🟡 caution and 🔵 info tiers

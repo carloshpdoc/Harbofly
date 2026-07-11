@@ -233,4 +233,36 @@ struct L {
           de: "Ich habe mit Harbofly \(size) Speicherplatz auf meinem Mac freigegeben 🗑️ https://harbofly.app",
           zh: "我用 Harbofly 释放了 \(size) 的 Mac 磁盘空间 🗑️ https://harbofly.app")
     }
+
+    // MARK: duplicatas
+    var paneCleaner: String { s("Limpeza", "Cleanup", es: "Limpieza", fr: "Nettoyage", de: "Aufräumen", zh: "清理") }
+    var paneDuplicates: String { s("Duplicatas", "Duplicates", es: "Duplicados", fr: "Doublons", de: "Duplikate", zh: "重复文件") }
+    var dupTitle: String { s("Arquivos duplicados", "Duplicate files", es: "Archivos duplicados", fr: "Fichiers en double", de: "Doppelte Dateien", zh: "重复文件") }
+    var dupIntro: String { s("Escolha pastas e procure cópias idênticas — mesmo conteúdo, verificado byte a byte. Nada é apagado sem você confirmar.", "Pick folders and find identical copies — same content, verified byte for byte. Nothing is deleted without your confirmation.", es: "Elige carpetas y busca copias idénticas — mismo contenido, verificado byte a byte. Nada se borra sin tu confirmación.", fr: "Choisissez des dossiers et trouvez les copies identiques — même contenu, vérifié octet par octet. Rien n'est supprimé sans votre confirmation.", de: "Wähle Ordner und finde identische Kopien — gleicher Inhalt, Byte für Byte geprüft. Nichts wird ohne deine Bestätigung gelöscht.", zh: "选择文件夹并查找完全相同的副本——内容一致，逐字节校验。未经你确认不会删除任何内容。") }
+    var dupEmpty: String { s("Nenhuma duplicata encontrada 🎉", "No duplicates found 🎉", es: "No se encontraron duplicados 🎉", fr: "Aucun doublon trouvé 🎉", de: "Keine Duplikate gefunden 🎉", zh: "未发现重复文件 🎉") }
+    var dupFind: String { s("Procurar duplicatas", "Find duplicates", es: "Buscar duplicados", fr: "Chercher les doublons", de: "Duplikate suchen", zh: "查找重复文件") }
+    var dupAddFolder: String { s("Adicionar pasta", "Add folder", es: "Añadir carpeta", fr: "Ajouter un dossier", de: "Ordner hinzufügen", zh: "添加文件夹") }
+    var dupRemoveFolder: String { s("Remover pasta", "Remove folder", es: "Quitar carpeta", fr: "Retirer le dossier", de: "Ordner entfernen", zh: "移除文件夹") }
+    var dupKeep: String { s("Original", "Original", es: "Original", fr: "Original", de: "Original", zh: "原件") }
+    var dupKeepWhy: String { s("Cópia que fica — nunca é apagada.", "The copy that stays — never deleted.", es: "La copia que se queda — nunca se borra.", fr: "La copie conservée — jamais supprimée.", de: "Die Kopie, die bleibt — wird nie gelöscht.", zh: "保留的副本——永不删除。") }
+    var dupSelectAll: String { s("Todas as cópias", "All copies", es: "Todas las copias", fr: "Toutes les copies", de: "Alle Kopien", zh: "所有副本") }
+    var dupSelectAllHelp: String { s("Seleciona todas as cópias (o original de cada grupo fica de fora)", "Selects every copy (the original of each group is left out)", es: "Selecciona todas las copias (el original de cada grupo queda fuera)", fr: "Sélectionne toutes les copies (l'original de chaque groupe est exclu)", de: "Wählt alle Kopien aus (das Original jeder Gruppe bleibt außen vor)", zh: "选择所有副本（每组的原件除外）") }
+    func dupGroupHeader(size: String, count: Int) -> String {
+        s("\(size) × \(count) cópias", "\(size) × \(count) copies",
+          es: "\(size) × \(count) copias", fr: "\(size) × \(count) copies",
+          de: "\(size) × \(count) Kopien", zh: "\(size) × \(count) 份")
+    }
+    func dupReclaim(_ size: String) -> String { s("recupera \(size)", "reclaims \(size)", es: "recupera \(size)", fr: "récupère \(size)", de: "gibt \(size) frei", zh: "可回收 \(size)") }
+    func dupConfirmTitle(count: Int, size: String) -> String {
+        let copies = count == 1
+            ? s("1 cópia", "1 copy", es: "1 copia", fr: "1 copie", de: "1 Kopie", zh: "1 份副本")
+            : s("\(count) cópias", "\(count) copies", es: "\(count) copias", fr: "\(count) copies", de: "\(count) Kopien", zh: "\(count) 份副本")
+        return s("Excluir \(copies) (\(size))? O original de cada grupo é mantido.",
+                 "Delete \(copies) (\(size))? The original of each group is kept.",
+                 es: "¿Eliminar \(copies) (\(size))? El original de cada grupo se mantiene.",
+                 fr: "Supprimer \(copies) (\(size)) ? L'original de chaque groupe est conservé.",
+                 de: "\(copies) (\(size)) löschen? Das Original jeder Gruppe bleibt erhalten.",
+                 zh: "删除 \(copies)（\(size)）？每组的原件将保留。")
+    }
+    var dupVerifiedNote: String { s("Comparação por conteúdo (SHA-256 + byte a byte), não por nome. O original de cada grupo nunca é apagado.", "Compared by content (SHA-256 + byte for byte), not by name. The original of each group is never deleted.", es: "Comparación por contenido (SHA-256 + byte a byte), no por nombre. El original de cada grupo nunca se borra.", fr: "Comparaison par contenu (SHA-256 + octet par octet), pas par nom. L'original de chaque groupe n'est jamais supprimé.", de: "Vergleich nach Inhalt (SHA-256 + Byte für Byte), nicht nach Name. Das Original jeder Gruppe wird nie gelöscht.", zh: "按内容比对（SHA-256 + 逐字节），而非按文件名。每组的原件永不删除。") }
 }
