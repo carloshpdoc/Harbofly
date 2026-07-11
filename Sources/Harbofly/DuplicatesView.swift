@@ -147,7 +147,9 @@ struct DuplicatesView: View {
             if scanner.scanning {
                 VStack(spacing: 8) {
                     ProgressView()
-                    Text(L10n.scanning).font(.callout).foregroundStyle(.secondary)
+                    Text(scanner.phase.map { L10n.dupPhaseText($0) } ?? L10n.scanning)
+                        .font(.callout).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, minHeight: 320)
             } else if scanner.groups.isEmpty {
@@ -213,6 +215,13 @@ struct DuplicatesView: View {
                     .font(.caption.monospaced()).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
             }
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([f.url])
+            } label: {
+                Image(systemName: "magnifyingglass")
+            }
+            .buttonStyle(.plain).foregroundStyle(.blue)
+            .help(L10n.revealInFinder)
         }
         .padding(6)
         .background(f.isKeeper ? Color.green.opacity(0.08)

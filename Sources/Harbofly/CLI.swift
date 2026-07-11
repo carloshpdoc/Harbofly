@@ -117,8 +117,8 @@ enum CLI {
         }
 
         let scanner = DuplicateScanner()
-        let groups = scanner.findDuplicates(roots: existing) { line in
-            if !json { FileHandle.standardError.write(Data("\(line)\n".utf8)) }
+        let groups = scanner.findDuplicates(roots: existing) { phase in
+            if !json { FileHandle.standardError.write(Data("\(phaseText(phase))\n".utf8)) }
         }
         let reclaimable = groups.reduce(Int64(0)) { $0 + $1.reclaimable }
 
@@ -185,6 +185,16 @@ enum CLI {
     }
 
     // MARK: helpers
+
+    /// Fase do scan de duplicatas em inglês (convenção do CLI).
+    private static func phaseText(_ p: DupPhase) -> String {
+        switch p {
+        case .listing: return "Listing files…"
+        case .comparing(let n): return "Comparing ends of \(n) candidates…"
+        case .hashing(let n): return "Full-hashing \(n) files…"
+        case .verifying: return "Verifying byte for byte…"
+        }
+    }
 
     private static func tierEmoji(_ t: Tier) -> String {
         switch t { case .safe: return "🟢"; case .caution: return "🟡"; case .info: return "🔵" }

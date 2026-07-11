@@ -265,4 +265,23 @@ struct L {
                  zh: "删除 \(copies)（\(size)）？每组的原件将保留。")
     }
     var dupVerifiedNote: String { s("Comparação por conteúdo (SHA-256 + byte a byte), não por nome. O original de cada grupo nunca é apagado.", "Compared by content (SHA-256 + byte for byte), not by name. The original of each group is never deleted.", es: "Comparación por contenido (SHA-256 + byte a byte), no por nombre. El original de cada grupo nunca se borra.", fr: "Comparaison par contenu (SHA-256 + octet par octet), pas par nom. L'original de chaque groupe n'est jamais supprimé.", de: "Vergleich nach Inhalt (SHA-256 + Byte für Byte), nicht nach Name. Das Original jeder Gruppe wird nie gelöscht.", zh: "按内容比对（SHA-256 + 逐字节），而非按文件名。每组的原件永不删除。") }
+    func dupPhaseText(_ phase: DupPhase) -> String {
+        let body: String
+        switch phase {
+        case .listing:
+            body = s("listando arquivos", "listing files", es: "listando archivos", fr: "liste des fichiers", de: "Dateien werden aufgelistet", zh: "正在列出文件")
+        case .comparing(let n):
+            body = s("comparando as pontas de \(n) candidatos", "comparing the ends of \(n) candidates", es: "comparando los extremos de \(n) candidatos", fr: "comparaison des extrémités de \(n) candidats", de: "vergleiche die Enden von \(n) Kandidaten", zh: "正在比较 \(n) 个候选文件的首尾")
+        case .hashing(let n):
+            body = s("verificando \(n) arquivos por completo", "full-hashing \(n) files", es: "verificando \(n) archivos por completo", fr: "hachage complet de \(n) fichiers", de: "vollständiges Hashen von \(n) Dateien", zh: "正在完整校验 \(n) 个文件")
+        case .verifying:
+            body = s("conferindo byte a byte", "verifying byte for byte", es: "comprobando byte a byte", fr: "vérification octet par octet", de: "Byte-für-Byte-Prüfung", zh: "正在逐字节核对")
+        }
+        return s("Etapa \(phase.step)/\(DupPhase.total) · \(body)…",
+                 "Step \(phase.step)/\(DupPhase.total) · \(body)…",
+                 es: "Paso \(phase.step)/\(DupPhase.total) · \(body)…",
+                 fr: "Étape \(phase.step)/\(DupPhase.total) · \(body)…",
+                 de: "Schritt \(phase.step)/\(DupPhase.total) · \(body)…",
+                 zh: "第 \(phase.step)/\(DupPhase.total) 步 · \(body)…")
+    }
 }

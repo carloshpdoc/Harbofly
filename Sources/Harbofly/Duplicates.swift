@@ -1,6 +1,28 @@
 import Foundation
 import CryptoKit
 
+// MARK: - Progresso
+
+/// Fase corrente do pipeline de detecção. Estruturado (não string) pra UI e CLI
+/// localizarem/formatarem por conta própria — o motor fica agnóstico de idioma.
+enum DupPhase: Equatable {
+    case listing                       // fase 0: enumerar
+    case comparing(candidates: Int)    // fase 2: hash parcial (pontas)
+    case hashing(count: Int)           // fase 3: SHA-256 completo
+    case verifying                     // fase 4: byte-a-byte
+
+    /// Passo no pipeline de 4 fases (pra UI mostrar "3/4").
+    var step: Int {
+        switch self {
+        case .listing: return 1
+        case .comparing: return 2
+        case .hashing: return 3
+        case .verifying: return 4
+        }
+    }
+    static let total = 4
+}
+
 // MARK: - Model
 
 /// Um arquivo dentro de um grupo de duplicatas.
@@ -40,7 +62,7 @@ struct DuplicateGroup: Identifiable {
 final class DuplicateScanner: ObservableObject {
     @Published var groups: [DuplicateGroup] = []
     @Published var scanning = false
-    @Published var statusLine = ""
+    @Published var phase: DupPhase?
     @Published var deleting = false
     @Published var deletingDone = 0
     @Published var deletingTotal = 0
@@ -69,13 +91,13 @@ final class DuplicateScanner: ObservableObject {
         groups = []
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let found = self.findDuplicates(roots: roots) { line in
-                DispatchQueue.main.async { self.statusLine = line }
+            let found = self.findDuplicates(roots: roots) { p in
+                DispatchQueue.main.async { self.phase = p }
             }
             DispatchQueue.main.async {
                 self.groups = found
                 self.scanning = false
-                self.statusLine = ""
+                self.phase = nil
             }
         }
     }
@@ -115,9 +137,9 @@ final class DuplicateScanner: ObservableObject {
 
     // MARK: Núcleo síncrono (compartilhado UI + CLI)
 
-    func findDuplicates(roots: [URL], progress: (String) -> Void = { _ in }) -> [DuplicateGroup] {
+    func findDuplicates(roots: [URL], progress: (DupPhase) -> Void = { _ in }) -> [DuplicateGroup] {
         // Fase 0 — enumerar, deduplicando hardlinks por (dev, inode).
-        progress("Listando arquivos…")
+        progress(.listing)
         var bySize: [Int64: [Entry]] = [:]
         var seenInodes = Set<InodeKey>()
         for root in roots {
@@ -133,7 +155,7 @@ final class DuplicateScanner: ObservableObject {
         guard !sizeGroups.isEmpty else { return [] }
 
         // Fase 2 — hash parcial (cabeça+cauda).
-        progress("Comparando pontas (\(sizeGroups.reduce(0) { $0 + $1.count }) candidatos)…")
+        progress(.comparing(candidates: sizeGroups.reduce(0) { $0 + $1.count }))
         var byPartial: [String: [Entry]] = [:]
         for group in sizeGroups {
             for e in group {
@@ -145,7 +167,7 @@ final class DuplicateScanner: ObservableObject {
         guard !partialFlat.isEmpty else { return [] }
 
         // Fase 3 — SHA-256 completo (streaming, concorrente).
-        progress("Hash completo de \(partialFlat.count) arquivos…")
+        progress(.hashing(count: partialFlat.count))
         var byFull: [String: [Entry]] = [:]
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: partialFlat.count) { i in
@@ -156,7 +178,7 @@ final class DuplicateScanner: ObservableObject {
         let fullGroups = byFull.filter { $0.value.count >= 2 }
 
         // Fase 4 — verificação byte-a-byte contra o keeper (garantia absoluta).
-        progress("Verificando byte-a-byte…")
+        progress(.verifying)
         var result: [DuplicateGroup] = []
         for (hash, entries) in fullGroups {
             let ranked = entries.sorted { keeperRank($0) < keeperRank($1) }
