@@ -272,8 +272,8 @@ struct L {
             body = s("listando arquivos", "listing files", es: "listando archivos", fr: "liste des fichiers", de: "Dateien werden aufgelistet", zh: "正在列出文件")
         case .comparing(let n):
             body = s("comparando as pontas de \(n) candidatos", "comparing the ends of \(n) candidates", es: "comparando los extremos de \(n) candidatos", fr: "comparaison des extrémités de \(n) candidats", de: "vergleiche die Enden von \(n) Kandidaten", zh: "正在比较 \(n) 个候选文件的首尾")
-        case .hashing(let n):
-            body = s("verificando \(n) arquivos por completo", "full-hashing \(n) files", es: "verificando \(n) archivos por completo", fr: "hachage complet de \(n) fichiers", de: "vollständiges Hashen von \(n) Dateien", zh: "正在完整校验 \(n) 个文件")
+        case .hashing(let done, let total):
+            body = s("verificando \(done)/\(total) arquivos por completo", "full-hashing \(done)/\(total) files", es: "verificando \(done)/\(total) archivos por completo", fr: "hachage complet de \(done)/\(total) fichiers", de: "vollständiges Hashen von \(done)/\(total) Dateien", zh: "正在完整校验 \(done)/\(total) 个文件")
         case .verifying:
             body = s("conferindo byte a byte", "verifying byte for byte", es: "comprobando byte a byte", fr: "vérification octet par octet", de: "Byte-für-Byte-Prüfung", zh: "正在逐字节核对")
         }

@@ -146,7 +146,14 @@ struct DuplicatesView: View {
         Group {
             if scanner.scanning {
                 VStack(spacing: 8) {
-                    ProgressView()
+                    // Fase 3 (hashing) tem contagem → barra determinística;
+                    // as demais fases seguem com spinner indeterminado.
+                    if case let .hashing(done, total) = scanner.phase, total > 0 {
+                        ProgressView(value: Double(done), total: Double(total))
+                            .frame(width: 220)
+                    } else {
+                        ProgressView()
+                    }
                     Text(scanner.phase.map { L10n.dupPhaseText($0) } ?? L10n.scanning)
                         .font(.callout).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

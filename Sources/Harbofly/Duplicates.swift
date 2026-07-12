@@ -6,10 +6,10 @@ import CryptoKit
 /// Fase corrente do pipeline de detecção. Estruturado (não string) pra UI e CLI
 /// localizarem/formatarem por conta própria — o motor fica agnóstico de idioma.
 enum DupPhase: Equatable {
-    case listing                       // fase 0: enumerar
-    case comparing(candidates: Int)    // fase 2: hash parcial (pontas)
-    case hashing(count: Int)           // fase 3: SHA-256 completo
-    case verifying                     // fase 4: byte-a-byte
+    case listing                        // fase 0: enumerar
+    case comparing(candidates: Int)     // fase 2: hash parcial (pontas)
+    case hashing(done: Int, total: Int) // fase 3: SHA-256 completo (determinístico)
+    case verifying                      // fase 4: byte-a-byte
 
     /// Passo no pipeline de 4 fases (pra UI mostrar "3/4").
     var step: Int {
@@ -166,14 +166,23 @@ final class DuplicateScanner: ObservableObject {
         let partialFlat = byPartial.values.filter { $0.count >= 2 }.flatMap { $0 }
         guard !partialFlat.isEmpty else { return [] }
 
-        // Fase 3 — SHA-256 completo (streaming, concorrente).
-        progress(.hashing(count: partialFlat.count))
+        // Fase 3 — SHA-256 completo (streaming, concorrente). Progresso
+        // determinístico: cada arquivo terminado avança o contador. Emite no
+        // máx ~100 vezes (step = total/100) pra não inundar main queue/stderr.
+        let total = partialFlat.count
+        progress(.hashing(done: 0, total: total))
         var byFull: [String: [Entry]] = [:]
+        var done = 0
+        let step = max(1, total / 100)
         let lock = NSLock()
-        DispatchQueue.concurrentPerform(iterations: partialFlat.count) { i in
+        DispatchQueue.concurrentPerform(iterations: total) { i in
             let e = partialFlat[i]
-            guard let h = self.fullHash(e.url) else { return }
-            lock.lock(); byFull[h, default: []].append(e); lock.unlock()
+            let h = self.fullHash(e.url)
+            lock.lock()
+            if let h { byFull[h, default: []].append(e) }
+            done += 1
+            if done % step == 0 || done == total { progress(.hashing(done: done, total: total)) }
+            lock.unlock()
         }
         let fullGroups = byFull.filter { $0.value.count >= 2 }
 

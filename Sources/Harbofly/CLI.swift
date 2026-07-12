@@ -118,7 +118,7 @@ enum CLI {
 
         let scanner = DuplicateScanner()
         let groups = scanner.findDuplicates(roots: existing) { phase in
-            if !json { FileHandle.standardError.write(Data("\(phaseText(phase))\n".utf8)) }
+            if !json { dupProgress(phase) }
         }
         let reclaimable = groups.reduce(Int64(0)) { $0 + $1.reclaimable }
 
@@ -191,8 +191,21 @@ enum CLI {
         switch p {
         case .listing: return "Listing files…"
         case .comparing(let n): return "Comparing ends of \(n) candidates…"
-        case .hashing(let n): return "Full-hashing \(n) files…"
+        case .hashing(let done, let total): return "Full-hashing \(done)/\(total) files…"
         case .verifying: return "Verifying byte for byte…"
+        }
+    }
+
+    /// Escreve a fase no stderr. A fase de hashing sobrescreve a mesma linha
+    /// com `\r` (contagem determinística), fechando com `\n` ao terminar.
+    private static func dupProgress(_ p: DupPhase) {
+        let err = FileHandle.standardError
+        switch p {
+        case .hashing(let done, let total):
+            err.write(Data("\r\(phaseText(p))   ".utf8))
+            if done == total { err.write(Data("\n".utf8)) }
+        default:
+            err.write(Data("\(phaseText(p))\n".utf8))
         }
     }
 
