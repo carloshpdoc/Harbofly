@@ -3,13 +3,13 @@
     <channel>
         <title>Harbofly</title>
         <item>
-            <title>1.7.1</title>
-            <pubDate>Wed, 08 Jul 2026 18:03:01 +0000</pubDate>
-            <sparkle:version>65</sparkle:version>
-            <sparkle:shortVersionString>1.7.1</sparkle:shortVersionString>
+            <title>1.8.0</title>
+            <pubDate>Sun, 12 Jul 2026 17:21:37 +0000</pubDate>
+            <sparkle:version>70</sparkle:version>
+            <sparkle:shortVersionString>1.8.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/carloshpdoc/Harbofly/releases/download/v1.7.1/Harbofly.dmg" length="5669701" type="application/octet-stream" sparkle:edSignature="H94KfwC+EuubfpNdIGEleR84kG6hqS0MsX4tNdAFDGqbfJtHhkMIJyITP5A2II+TQ+EqK1WmQQmDQ5qsDhkKDA=="/>
+            <enclosure url="https://github.com/carloshpdoc/Harbofly/releases/download/v1.8.0/Harbofly.dmg" length="5798361" type="application/octet-stream" sparkle:edSignature="Qw4nh/9obzlmtTHlD9H/p1/ocbryUs+iwSgW9on90zFwQQLuJyOa+Nl/zbGErR4g3fWe1vKCmDb9CLD6knZ0BQ=="/>
         </item>
     </channel>
 </rss>
