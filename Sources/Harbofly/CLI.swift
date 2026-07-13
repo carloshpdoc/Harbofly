@@ -84,6 +84,8 @@ enum CLI {
             return 0
         }
         var freed: Int64 = 0
+        var cleaned = 0
+        var byCategory: [String: Int64] = [:]
         for t in eligible {
             if dryRun {
                 print("would trash:  \(pad(fmt(t.bytes)))  \(t.displayLabel)")
@@ -91,10 +93,14 @@ enum CLI {
             } else if (try? FileManager.default.trashItem(at: t.url, resultingItemURL: nil)) != nil {
                 print("trashed:  \(pad(fmt(t.bytes)))  \(t.displayLabel)")
                 freed += t.bytes
+                cleaned += 1
+                byCategory[t.url.lastPathComponent, default: 0] += t.bytes
             } else {
                 print("FAILED:   \(t.displayLabel) — \(t.url.path)")
             }
         }
+        // Mesmo histórico/total da UI (mesmo domínio de defaults do .app).
+        if !dryRun { CleanLog.record(bytes: freed, count: cleaned, byCategory: byCategory) }
         print(dryRun ? "\nWould move \(fmt(freed)) to the Trash."
                      : "\nMoved \(fmt(freed)) to the Trash (recoverable until you empty it).")
         if targets.contains(where: { $0.isDocker }) {
@@ -159,6 +165,7 @@ enum CLI {
                 if ok { freed += f.size; n += 1 }
             }
         }
+        CleanLog.record(bytes: freed, count: n, byCategory: ["duplicates": freed])
         print(permanent
               ? "Deleted \(n) file(s), freed \(fmt(freed))."
               : "Moved \(n) file(s) to the Trash, freed \(fmt(freed)) (recoverable).")

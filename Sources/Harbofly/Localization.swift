@@ -234,6 +234,40 @@ struct L {
           zh: "我用 Harbofly 释放了 \(size) 的 Mac 磁盘空间 🗑️ https://harbofly.app")
     }
 
+    // MARK: histórico / recap
+    var paneStats: String { s("Histórico", "History", es: "Historial", fr: "Historique", de: "Verlauf", zh: "历史") }
+    var statsEmpty: String { s("Nada por aqui ainda. Faça sua primeira limpeza e volte pra ver suas estatísticas 📊", "Nothing here yet. Run your first cleanup and come back for your stats 📊", es: "Aún no hay nada. Haz tu primera limpieza y vuelve para ver tus estadísticas 📊", fr: "Rien ici pour l'instant. Lancez votre premier nettoyage et revenez voir vos statistiques 📊", de: "Noch nichts hier. Räume zum ersten Mal auf und schau dann wieder vorbei 📊", zh: "这里还没有内容。先清理一次，再回来查看你的统计数据 📊") }
+    func statsRecoveredSince(_ date: String) -> String { s("recuperados desde \(date)", "recovered since \(date)", es: "recuperados desde \(date)", fr: "récupérés depuis le \(date)", de: "freigegeben seit \(date)", zh: "自 \(date) 起已释放") }
+    var statsRecoveredSoFar: String { s("recuperados até hoje", "recovered so far", es: "recuperados hasta hoy", fr: "récupérés à ce jour", de: "bisher freigegeben", zh: "累计已释放") }
+    func moneyLine(_ usd: String) -> String { s("💸 ≈ \(usd) em upgrades de SSD da Apple que você não precisou comprar", "💸 ≈ \(usd) worth of Apple SSD upgrades you didn't have to buy", es: "💸 ≈ \(usd) en ampliaciones de SSD de Apple que no tuviste que comprar", fr: "💸 ≈ \(usd) de stockage SSD Apple que vous n'avez pas eu à acheter", de: "💸 ≈ \(usd) an Apple-SSD-Upgrades, die du nicht kaufen musstest", zh: "💸 ≈ 帮你省下了相当于 \(usd) 的 Apple SSD 升级费用") }
+    var moneyFootnote: String { s("No preço oficial da Apple: US$ 200 por 512 GB de upgrade.", "At Apple's list price: $200 per 512 GB upgrade.", es: "Al precio oficial de Apple: 200 US$ por cada 512 GB de ampliación.", fr: "Au tarif officiel d'Apple : 200 $ par palier de 512 Go.", de: "Zum offiziellen Apple-Preis: 200 $ pro 512-GB-Upgrade.", zh: "按 Apple 官方价格：每 512 GB 升级 200 美元。") }
+    func eqMovies(_ n: Int) -> String { s("🎬 Dá \(n) filmes em 4K", "🎬 That's \(n) 4K movies", es: "🎬 Equivale a \(n) películas en 4K", fr: "🎬 Soit \(n) films en 4K", de: "🎬 Das sind \(n) 4K-Filme", zh: "🎬 约等于 \(n) 部 4K 电影") }
+    func eqPhotos(_ n: String) -> String { s("📸 Dá \(n) fotos", "📸 That's \(n) photos", es: "📸 Equivale a \(n) fotos", fr: "📸 Soit \(n) photos", de: "📸 Das sind \(n) Fotos", zh: "📸 约等于 \(n) 张照片") }
+    var statsCleans: String { s("Limpezas", "Cleanups", es: "Limpiezas", fr: "Nettoyages", de: "Bereinigungen", zh: "清理次数") }
+    var statsBiggest: String { s("Maior limpeza", "Biggest cleanup", es: "Mayor limpieza", fr: "Plus gros nettoyage", de: "Größte Bereinigung", zh: "最大一次清理") }
+    var statsLast30d: String { s("Últimos 30 dias", "Last 30 days", es: "Últimos 30 días", fr: "30 derniers jours", de: "Letzte 30 Tage", zh: "最近 30 天") }
+    var statsTopVillain: String { s("Maior vilão", "Top offender", es: "Mayor culpable", fr: "Principal coupable", de: "Größter Übeltäter", zh: "头号元凶") }
+    var statsChartTitle: String { s("Últimas 12 semanas", "Last 12 weeks", es: "Últimas 12 semanas", fr: "12 dernières semaines", de: "Letzte 12 Wochen", zh: "最近 12 周") }
+    var shareRecap: String { s("Compartilhar recap", "Share recap", es: "Compartir resumen", fr: "Partager le récap", de: "Recap teilen", zh: "分享战绩") }
+    func recapMoneyShort(_ usd: String) -> String { s("≈ \(usd) em SSD da Apple 💸", "≈ \(usd) in Apple SSD 💸", es: "≈ \(usd) en SSD de Apple 💸", fr: "≈ \(usd) de SSD Apple 💸", de: "≈ \(usd) an Apple-SSD 💸", zh: "≈ 省下 \(usd) 的 Apple SSD 💸") }
+    func recapCardFooter(count: Int, villain: String) -> String {
+        let cleans = count == 1
+            ? s("1 limpeza", "1 cleanup", es: "1 limpieza", fr: "1 nettoyage", de: "1 Bereinigung", zh: "1 次清理")
+            : s("\(count) limpezas", "\(count) cleanups", es: "\(count) limpiezas", fr: "\(count) nettoyages", de: "\(count) Bereinigungen", zh: "\(count) 次清理")
+        if villain.isEmpty { return cleans }
+        return s("\(cleans) · maior vilão: \(villain)", "\(cleans) · top offender: \(villain)",
+                 es: "\(cleans) · mayor culpable: \(villain)", fr: "\(cleans) · principal coupable : \(villain)",
+                 de: "\(cleans) · größter Übeltäter: \(villain)", zh: "\(cleans) · 头号元凶：\(villain)")
+    }
+    func recapShareText(size: String, usd: String) -> String {
+        s("O Harbofly já recuperou \(size) no meu Mac — ≈ \(usd) que a Apple cobraria em SSD 💸 https://harbofly.app",
+          "Harbofly has recovered \(size) on my Mac — ≈ \(usd) Apple would charge for that SSD 💸 https://harbofly.app",
+          es: "Harbofly ya recuperó \(size) en mi Mac — ≈ \(usd) que Apple cobraría por ese SSD 💸 https://harbofly.app",
+          fr: "Harbofly a déjà récupéré \(size) sur mon Mac — ≈ \(usd) qu'Apple facturerait pour ce SSD 💸 https://harbofly.app",
+          de: "Harbofly hat auf meinem Mac schon \(size) freigegeben — ≈ \(usd), die Apple für diese SSD verlangen würde 💸 https://harbofly.app",
+          zh: "Harbofly 已在我的 Mac 上释放了 \(size)——约等于 Apple 会收取的 \(usd) SSD 费用 💸 https://harbofly.app")
+    }
+
     // MARK: duplicatas
     var paneCleaner: String { s("Limpeza", "Cleanup", es: "Limpieza", fr: "Nettoyage", de: "Aufräumen", zh: "清理") }
     var paneDuplicates: String { s("Duplicatas", "Duplicates", es: "Duplicados", fr: "Doublons", de: "Duplikate", zh: "重复文件") }

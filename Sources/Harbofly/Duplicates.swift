@@ -128,6 +128,8 @@ final class DuplicateScanner: ObservableObject {
                     g.files.removeAll { deleted.contains($0.id) }
                     return g.files.count >= 2 ? g : nil
                 }
+                CleanLog.record(bytes: freedFinal, count: deleted.count,
+                                byCategory: ["duplicates": freedFinal])
                 self.lastFreedBytes = freedFinal
                 self.deleting = false
                 self.justFinished = true

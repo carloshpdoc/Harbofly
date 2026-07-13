@@ -75,6 +75,8 @@ enum Prefs {
     static let language = "language"
     // Total acumulado (bytes) já limpo pelo app, na vida toda.
     static let totalFreedBytes = "totalFreedBytes"
+    /// Histórico detalhado de limpezas (ver CleanLog em Stats.swift).
+    static let cleanHistory = "cleanHistory"
 }
 
 // MARK: - Model
@@ -237,9 +239,7 @@ final class DiskScanner: ObservableObject {
             }
             let freedFinal = freed, countFinal = count, categories = byCategory
             DispatchQueue.main.async {
-                let d = UserDefaults.standard
-                d.set(Int(d.integer(forKey: Prefs.totalFreedBytes)) + Int(freedFinal),
-                      forKey: Prefs.totalFreedBytes)
+                CleanLog.record(bytes: freedFinal, count: countFinal, byCategory: categories)
                 self?.lastFreedBytes = freedFinal
                 self?.lastDeletePermanent = permanently
                 self?.justCleaned = true
@@ -685,8 +685,8 @@ final class DiskScanner: ObservableObject {
 
 // MARK: - UI
 
-/// Painel ativo do popover/janela: limpeza de disco ou busca de duplicatas.
-enum Pane { case cleaner, duplicates }
+/// Painel ativo do popover/janela: limpeza de disco, duplicatas ou histórico.
+enum Pane { case cleaner, duplicates, stats }
 
 struct ContentView: View {
     @ObservedObject var scanner: DiskScanner
@@ -771,6 +771,7 @@ struct ContentView: View {
                 Picker("", selection: $pane) {
                     Text(L10n.paneCleaner).tag(Pane.cleaner)
                     Text(L10n.paneDuplicates).tag(Pane.duplicates)
+                    Text(L10n.paneStats).tag(Pane.stats)
                 }
                 .pickerStyle(.segmented).labelsHidden()
 
@@ -780,8 +781,10 @@ struct ContentView: View {
                     listSection
                     Divider()
                     footer
-                } else {
+                } else if pane == .duplicates {
                     DuplicatesView(scanner: duplicates)
+                } else {
+                    StatsView()
                 }
             }
             .padding(12)
@@ -842,44 +845,18 @@ struct ContentView: View {
 
     /// Card 1200x675 (proporção OG/Twitter) com o quanto foi recuperado.
     private func makeShareImage(freed: Int64) -> NSImage {
-        let size = NSSize(width: 1200, height: 675)
-        let img = NSImage(size: size)
-        img.lockFocus()
-
-        let rect = NSRect(origin: .zero, size: size)
-        NSGradient(colors: [
-            NSColor(srgbRed: 0.031, green: 0.063, blue: 0.110, alpha: 1),
-            NSColor(srgbRed: 0.051, green: 0.106, blue: 0.165, alpha: 1),
-        ])?.draw(in: rect, angle: 120)
-
-        let teal = NSColor(srgbRed: 0.31, green: 0.82, blue: 0.77, alpha: 1)
-        let ink = NSColor(srgbRed: 0.918, green: 0.949, blue: 1.0, alpha: 1)
-        let muted = NSColor(srgbRed: 0.56, green: 0.63, blue: 0.71, alpha: 1)
-
-        func draw(_ s: String, font: NSFont, color: NSColor, y: CGFloat) {
-            let p = NSMutableParagraphStyle(); p.alignment = .center
-            let attr: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: p]
-            let str = s as NSString
-            let h = str.size(withAttributes: attr).height
-            str.draw(in: NSRect(x: 0, y: y - h / 2, width: size.width, height: h), withAttributes: attr)
+        ShareCard.render { draw in
+            draw(L10n.shareCardVerb, .systemFont(ofSize: 60, weight: .semibold), ShareCard.muted, 470)
+            draw(fmt(freed), .systemFont(ofSize: 150, weight: .heavy), ShareCard.teal, 350)
+            draw(L10n.shareCardTail, .systemFont(ofSize: 44, weight: .medium), ShareCard.ink, 190)
+            draw("harbofly.app", .monospacedSystemFont(ofSize: 34, weight: .regular), ShareCard.muted, 95)
         }
-
-        draw(L10n.shareCardVerb, font: .systemFont(ofSize: 60, weight: .semibold), color: muted, y: 470)
-        draw(fmt(freed), font: .systemFont(ofSize: 150, weight: .heavy), color: teal, y: 350)
-        draw(L10n.shareCardTail, font: .systemFont(ofSize: 44, weight: .medium), color: ink, y: 190)
-        draw("harbofly.app", font: .monospacedSystemFont(ofSize: 34, weight: .regular), color: muted, y: 95)
-
-        img.unlockFocus()
-        return img
     }
 
     private func shareAchievement() {
         let image = makeShareImage(freed: scanner.lastFreedBytes)
         let text = L10n.shareText(fmt(scanner.lastFreedBytes))
-        let picker = NSSharingServicePicker(items: [image, text])
-        if let view = NSApp.keyWindow?.contentView {
-            picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
-        }
+        showSharePicker([image, text])
     }
 
     // MARK: Overlays (inline — não fecham o popover da barra de menu)
@@ -999,6 +976,14 @@ struct ContentView: View {
                 if totalFreedBytes > 0 && Int64(totalFreedBytes) != freed {
                     Text(L10n.totalFreed(fmt(Int64(totalFreedBytes))))
                         .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                // O total em dinheiro (preço de SSD da Apple): pico de
+                // gratidão é o melhor momento pro pedido de café logo abaixo.
+                if Double(totalFreedBytes) * CleanStats.usdPerByte >= 1 {
+                    Text(L10n.recapMoneyShort(fmtUSD(Double(totalFreedBytes) * CleanStats.usdPerByte)))
+                        .font(.caption.bold()).foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
                 }
 
