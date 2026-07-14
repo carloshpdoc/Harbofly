@@ -77,6 +77,13 @@ enum Prefs {
     static let totalFreedBytes = "totalFreedBytes"
     /// Histórico detalhado de limpezas (ver CleanLog em Stats.swift).
     static let cleanHistory = "cleanHistory"
+    // Oferta proativa de auto-clean: depois de N limpezas manuais, convida a
+    // automatizar (mesma cadência de snooze crescente da doação).
+    static let manualCleanCount = "manualCleanCount"
+    static let autoOfferSnoozeUntil = "autoOfferSnoozeUntil"
+    static let autoOfferSnoozeCount = "autoOfferSnoozeCount"
+    /// Limpezas manuais antes de oferecer a automação.
+    static let autoOfferThreshold = 3
 }
 
 // MARK: - Model
@@ -576,7 +583,17 @@ final class DiskScanner: ObservableObject {
             guard trigger == "xcode", elapsed >= 3_600 else { return }
         } else {
             switch trigger {
-            case "daily": guard elapsed >= 86_400 else { return }
+            case "daily", "endofday":
+                // "No fim do dia": preferido de noite (>=18h), mas nunca deixa
+                // passar um dia inteiro se o Mac não esteve ligado à noite.
+                guard elapsed >= 3_600 else { return }
+                let hour = Calendar.current.component(.hour, from: Date())
+                guard hour >= 18 || elapsed >= 86_400 else { return }
+            case "startofday":
+                // "No começo do dia": de manhã (6h–12h), mesmo fallback de 24h.
+                guard elapsed >= 3_600 else { return }
+                let hour = Calendar.current.component(.hour, from: Date())
+                guard (hour >= 6 && hour < 12) || elapsed >= 86_400 else { return }
             case "weekly": guard elapsed >= 604_800 else { return }
             case "lowdisk":
                 // statfs é barato; checa direto se cruzou o limite do aviso.
@@ -709,6 +726,8 @@ struct ContentView: View {
     /// Força a seção de doação mesmo pra quem já apoiou (quando o próprio usuário
     /// clica em "Apoiar" no rodapé).
     @State private var manualSupport = false
+    /// Oferta proativa de auto-clean após algumas limpezas manuais.
+    @State private var showAutoOffer = false
 
     @AppStorage(Prefs.deletePermanently) private var deletePermanently = false
     @AppStorage(Prefs.notifyEnabled) private var notifyEnabled = true
@@ -726,6 +745,9 @@ struct ContentView: View {
     @AppStorage(Prefs.autoCleanLastCount) private var autoCleanLastCount = 0
     @AppStorage(Prefs.analyticsChoiceMade) private var analyticsChoiceMade = false
     @AppStorage(Prefs.analyticsEnabled) private var analyticsEnabled = false
+    @AppStorage(Prefs.manualCleanCount) private var manualCleanCount = 0
+    @AppStorage(Prefs.autoOfferSnoozeUntil) private var autoOfferSnoozeUntil = 0.0
+    @AppStorage(Prefs.autoOfferSnoozeCount) private var autoOfferSnoozeCount = 0
     // Observa a troca manual de idioma: ao mudar, a View re-renderiza e o L10n
     // (computado) já devolve as strings no idioma novo.
     @AppStorage(Prefs.language) private var language = "system"
@@ -733,6 +755,14 @@ struct ContentView: View {
     /// Só pede doação se a pessoa nunca apoiou e o snooze já venceu.
     private var shouldAskDonate: Bool {
         !hasSupported && Date().timeIntervalSince1970 > donateSnoozeUntil
+    }
+
+    /// Oferece automatizar quando a pessoa já limpou manualmente algumas vezes,
+    /// ainda não ligou o auto-clean e o snooze da oferta já venceu.
+    private var shouldOfferAutoClean: Bool {
+        !autoCleanEnabled
+            && manualCleanCount >= Prefs.autoOfferThreshold
+            && Date().timeIntervalSince1970 > autoOfferSnoozeUntil
     }
 
     private let timer = Timer.publish(every: 1800, on: .main, in: .common).autoconnect()
@@ -788,10 +818,11 @@ struct ContentView: View {
                 }
             }
             .padding(12)
-            .disabled(confirming || showSupport || showFeedback || !analyticsChoiceMade)
+            .disabled(confirming || showSupport || showFeedback || showAutoOffer || !analyticsChoiceMade)
 
             if !analyticsChoiceMade { analyticsOptInOverlay }
             else if confirming { confirmOverlay }
+            if showAutoOffer { autoCleanOfferOverlay }
             if showSupport { supportOverlay }
             if showFeedback { feedbackOverlay }
         }
@@ -802,9 +833,16 @@ struct ContentView: View {
         }
         .onReceive(timer) { _ in scanner.scan() }
         .onChange(of: scanner.justCleaned) { _, cleaned in
-            if cleaned {
-                scanner.justCleaned = false
-                if scanner.lastFreedBytes > 0 { pixCopied = false; showSupport = true }
+            guard cleaned else { return }
+            scanner.justCleaned = false
+            guard scanner.lastFreedBytes > 0 else { return }
+            // No pico de valor (acabou de limpar), ou oferece automatizar (se
+            // ainda faz na mão), ou cai no card de conquista/apoio de sempre.
+            if shouldOfferAutoClean {
+                showAutoOffer = true
+            } else {
+                pixCopied = false
+                showSupport = true
             }
         }
     }
@@ -839,6 +877,57 @@ struct ContentView: View {
         donateSnoozeCount += 1
         showSupport = false
         manualSupport = false
+    }
+
+    /// Liga o auto-clean no preset mais seguro (fim do dia, só caches),
+    /// direto da oferta proativa. A UI de config no rodapé fica disponível
+    /// pra ajustar depois.
+    private func acceptAutoOffer() {
+        autoCleanEnabled = true
+        autoCleanTrigger = "daily"   // = "No fim do dia"
+        autoCleanScope = "caches"
+        showAutoOffer = false
+    }
+
+    /// "Agora não" na oferta: adia por intervalo crescente (mesma escada da doação).
+    private func snoozeAutoOffer() {
+        let days = Prefs.snoozeDays[min(autoOfferSnoozeCount, Prefs.snoozeDays.count - 1)]
+        autoOfferSnoozeUntil = Date().timeIntervalSince1970 + days * 86_400
+        autoOfferSnoozeCount += 1
+        showAutoOffer = false
+        // Não perde o card de conquista/apoio dessa limpeza.
+        pixCopied = false
+        showSupport = true
+    }
+
+    /// Oferta proativa: "você já limpou N vezes, quer automatizar?".
+    private var autoCleanOfferOverlay: some View {
+        overlayCard {
+            VStack(spacing: 14) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 40)).foregroundStyle(.tint)
+                Text(L10n.autoOfferTitle(count: manualCleanCount))
+                    .font(.headline).multilineTextAlignment(.center)
+                Text(L10n.autoOfferBody)
+                    .font(.callout).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    acceptAutoOffer()
+                } label: {
+                    Text(L10n.autoOfferYes).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    snoozeAutoOffer()
+                } label: {
+                    Text(L10n.notNow).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
     }
 
     // MARK: Compartilhar conquista
@@ -946,6 +1035,7 @@ struct ContentView: View {
                     let perm = deletePermanently
                     selection.removeAll()
                     confirming = false
+                    manualCleanCount += 1 // alimenta a oferta proativa de auto-clean
                     scanner.delete(items, permanently: perm)
                 } label: {
                     Text(deletePermanently ? L10n.deletePermanentlyBtn : L10n.moveToTrash)
@@ -1130,10 +1220,11 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 Text(L10n.autoCleanWhenLabel).font(.caption).foregroundStyle(.secondary)
                 Picker("", selection: $autoCleanTrigger) {
+                    Text(L10n.autoCleanEndOfDay).tag("daily")
+                    Text(L10n.autoCleanStartOfDay).tag("startofday")
                     Text(L10n.autoCleanXcode).tag("xcode")
-                    Text(L10n.autoCleanLowDisk).tag("lowdisk")
-                    Text(L10n.autoCleanDaily).tag("daily")
                     Text(L10n.autoCleanWeekly).tag("weekly")
+                    Text(L10n.autoCleanLowDisk).tag("lowdisk")
                 }
                 .labelsHidden().pickerStyle(.menu).fixedSize()
 

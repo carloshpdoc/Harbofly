@@ -183,8 +183,9 @@ struct L {
     // MARK: auto-clean
     var autoCleanToggle: String { s("Limpar seguros automaticamente", "Auto-clean safe items", es: "Limpiar seguros automáticamente", fr: "Nettoyage auto des éléments sûrs", de: "Sichere automatisch bereinigen", zh: "自动清理安全项") }
     var autoCleanXcode: String { s("Ao fechar o Xcode", "When Xcode quits", es: "Al cerrar Xcode", fr: "À la fermeture de Xcode", de: "Beim Beenden von Xcode", zh: "退出 Xcode 时") }
-    var autoCleanDaily: String { s("Diariamente", "Daily", es: "A diario", fr: "Chaque jour", de: "Täglich", zh: "每天") }
-    var autoCleanWeekly: String { s("Semanalmente", "Weekly", es: "Semanalmente", fr: "Chaque semaine", de: "Wöchentlich", zh: "每周") }
+    var autoCleanEndOfDay: String { s("No fim do dia", "At the end of the day", es: "Al final del día", fr: "En fin de journée", de: "Am Ende des Tages", zh: "在一天结束时") }
+    var autoCleanStartOfDay: String { s("No começo do dia", "At the start of the day", es: "Al comenzar el día", fr: "En début de journée", de: "Zu Beginn des Tages", zh: "在一天开始时") }
+    var autoCleanWeekly: String { s("Toda semana", "Every week", es: "Cada semana", fr: "Chaque semaine", de: "Jede Woche", zh: "每周") }
     var autoCleanNote: String { s("Só itens 🟢 seguros, sempre pra Lixeira. Seu código-fonte nunca é tocado.", "Only 🟢 safe items, always to the Trash. Your source code is never touched.", es: "Solo elementos 🟢 seguros, siempre a la Papelera. Tu código fuente nunca se toca.", fr: "Uniquement les éléments 🟢 sûrs, toujours vers la Corbeille. Votre code source n'est jamais touché.", de: "Nur 🟢 sichere Elemente, immer in den Papierkorb. Dein Quellcode wird nie angetastet.", zh: "只清理 🟢 安全项，始终移到废纸篓。绝不触碰你的源代码。") }
     var autoCleanWhenLabel: String { s("Quando:", "When:", es: "Cuándo:", fr: "Quand :", de: "Wann:", zh: "时机：") }
     var autoCleanScopeLabel: String { s("O quê:", "What:", es: "Qué:", fr: "Quoi :", de: "Was:", zh: "范围：") }
@@ -206,6 +207,15 @@ struct L {
           de: "\(count) Elemente (\(size)) wurden in den Papierkorb verschoben.", zh: "已将 \(count) 个项目（\(size)）移到废纸篓。")
     }
     var checkNow: String { s("Buscar agora", "Check now", es: "Buscar ahora", fr: "Vérifier maintenant", de: "Jetzt suchen", zh: "立即检查") }
+
+    // MARK: oferta proativa de auto-clean
+    func autoOfferTitle(count: Int) -> String {
+        s("Você já limpou \(count) vezes 🧹", "You've cleaned up \(count) times 🧹",
+          es: "Ya limpiaste \(count) veces 🧹", fr: "Vous avez nettoyé \(count) fois 🧹",
+          de: "Du hast schon \(count)-mal aufgeräumt 🧹", zh: "你已经手动清理了 \(count) 次 🧹")
+    }
+    var autoOfferBody: String { s("Quer que o \(AppInfo.name) faça essa faxina sozinho, no fim de cada dia? Só caches 🟢 seguros, sempre pra Lixeira. Você desliga quando quiser.", "Want \(AppInfo.name) to do this cleanup on its own, at the end of each day? Only 🟢 safe caches, always to the Trash. Turn it off whenever you like.", es: "¿Quieres que \(AppInfo.name) haga esta limpieza solo, al final de cada día? Solo cachés 🟢 seguros, siempre a la Papelera. Lo apagas cuando quieras.", fr: "Vous voulez que \(AppInfo.name) fasse ce nettoyage tout seul, en fin de journée ? Uniquement les caches 🟢 sûrs, toujours vers la Corbeille. Désactivable à tout moment.", de: "Soll \(AppInfo.name) das am Ende jedes Tages von selbst erledigen? Nur 🟢 sichere Caches, immer in den Papierkorb. Jederzeit abschaltbar.", zh: "要不要让 \(AppInfo.name) 在每天结束时自动完成这项清理？只清理 🟢 安全缓存，始终进废纸篓。随时可关闭。") }
+    var autoOfferYes: String { s("Sim, cuida disso pra mim", "Yes, handle it for me", es: "Sí, encárgate por mí", fr: "Oui, occupe-t'en pour moi", de: "Ja, übernimm das für mich", zh: "好，帮我自动处理") }
     var openAtLogin: String { s("Abrir no login", "Open at login", es: "Abrir al iniciar sesión", fr: "Ouvrir à la connexion", de: "Beim Anmelden öffnen", zh: "登录时打开") }
     var supportCta: String { s("Apoiar ☕", "Support ☕", es: "Apoyar ☕", fr: "Soutenir ☕", de: "Unterstützen ☕", zh: "支持 ☕") }
     var languageLabel: String { s("Idioma", "Language", es: "Idioma", fr: "Langue", de: "Sprache", zh: "语言") }
