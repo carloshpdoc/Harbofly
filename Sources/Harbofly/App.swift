@@ -114,6 +114,14 @@ struct CleanTarget: Identifiable {
 
     var displayLabel: String { labelKey.map { L10n[keyPath: $0] } ?? label }
     var detail: String { L10n[keyPath: detailKey] }
+    /// Categoria genérica pra histórico e telemetria — NUNCA nome de projeto.
+    /// DerivedData do Xcode é por-projeto (pasta "Projeto-hash"), então força
+    /// "DerivedData"; o resto usa o nome (genérico) da pasta de cache.
+    var category: String {
+        if isDocker { return "Docker" }
+        if url.path.contains("/Xcode/DerivedData/") { return "DerivedData" }
+        return url.lastPathComponent
+    }
     /// Dias desde a última atividade do projeto dono (só artifacts de dev;
     /// nil quando não se aplica ou não deu pra medir).
     var staleDays: Int? = nil
@@ -196,8 +204,16 @@ final class DiskScanner: ObservableObject {
                 self.scanning = false
                 self.checkLowSpaceNotification()
                 let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
-                let recoverable = found.filter { !$0.tier.isReadOnly }.reduce(Int64(0)) { $0 + $1.bytes }
-                Analytics.scanFinished(durationMs: ms, itemCount: found.count, recoverableBytes: recoverable)
+                let cleanable = found.filter { !$0.tier.isReadOnly }
+                let recoverable = cleanable.reduce(Int64(0)) { $0 + $1.bytes }
+                // Composição só do que é recuperável (o tier informativo fica de
+                // fora — inclui a linha "purgeable" cujo path é a home).
+                var byCategory: [String: Int64] = [:]
+                for t in cleanable { byCategory[t.category, default: 0] += t.bytes }
+                let freeRatio = total > 0 ? Double(free) / Double(total) : 1
+                Analytics.scanFinished(durationMs: ms, itemCount: found.count,
+                                       recoverableBytes: recoverable,
+                                       freeRatio: freeRatio, byCategory: byCategory)
                 if self.pendingAutoClean {
                     self.pendingAutoClean = false
                     self.performAutoClean()
@@ -219,6 +235,7 @@ final class DiskScanner: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var freed: Int64 = 0
             var count = 0
+            var anyFailed = false
             // Bytes liberados por tipo genérico de cache (nunca o caminho/nome real).
             var byCategory: [String: Int64] = [:]
             for item in deletable {
@@ -235,8 +252,9 @@ final class DiskScanner: ObservableObject {
                 if ok {
                     freed += item.bytes
                     count += 1
-                    let key = item.isDocker ? "docker" : item.url.lastPathComponent
-                    byCategory[key, default: 0] += item.bytes
+                    byCategory[item.category, default: 0] += item.bytes
+                } else {
+                    anyFailed = true
                 }
                 // Feedback imediato: some da lista assim que o item vai pra
                 // Lixeira, sem esperar o rescan completo do final.
@@ -245,7 +263,7 @@ final class DiskScanner: ObservableObject {
                     if ok { self?.targets.removeAll { $0.id == item.id } }
                 }
             }
-            let freedFinal = freed, countFinal = count, categories = byCategory
+            let freedFinal = freed, countFinal = count, categories = byCategory, failed = anyFailed
             DispatchQueue.main.async {
                 CleanLog.record(bytes: freedFinal, count: countFinal, byCategory: categories)
                 self?.lastFreedBytes = freedFinal
@@ -254,6 +272,7 @@ final class DiskScanner: ObservableObject {
                 self?.deleting = false
                 Analytics.deleteConfirmed(mode: permanently ? "permanent" : "trash",
                                           freedBytes: freedFinal, itemCount: countFinal, byCategory: categories)
+                if failed { Analytics.failure("delete") }
                 self?.scan()
             }
         }
@@ -646,6 +665,8 @@ final class DiskScanner: ObservableObject {
                      "count": Double(eligible.count)], at: 0)
         d.set(Array(hist.prefix(10)), forKey: Prefs.autoCleanHistory)
 
+        Analytics.autoCleanRan(trigger: d.string(forKey: Prefs.autoCleanTrigger) ?? "daily",
+                               scope: scope, freedBytes: total, itemCount: eligible.count)
         notifyAutoClean(freed: total, count: eligible.count)
         delete(eligible, permanently: false)
     }
@@ -835,6 +856,13 @@ struct ContentView: View {
             if scanner.targets.isEmpty { scanner.scan() }
         }
         .onReceive(timer) { _ in scanner.scan() }
+        .onChange(of: pane) { _, p in
+            if p == .duplicates { Analytics.featureUsed("duplicates") }
+            else if p == .stats { Analytics.featureUsed("history") }
+        }
+        .onChange(of: autoCleanEnabled) { _, _ in reportAutoCleanConfig() }
+        .onChange(of: autoCleanTrigger) { _, _ in reportAutoCleanConfig() }
+        .onChange(of: autoCleanScope) { _, _ in reportAutoCleanConfig() }
         .onChange(of: scanner.justCleaned) { _, cleaned in
             guard cleaned else { return }
             scanner.justCleaned = false
@@ -853,6 +881,10 @@ struct ContentView: View {
     // Abre a janela de app (dock + foco), fora da barra de menu.
     func openMainWindow() {
         presentMainWindow(using: openWindow)
+    }
+
+    private func reportAutoCleanConfig() {
+        Analytics.autoCleanConfigured(enabled: autoCleanEnabled, trigger: autoCleanTrigger, scope: autoCleanScope)
     }
 
     private func setLoginItem(_ enabled: Bool) {
@@ -946,6 +978,7 @@ struct ContentView: View {
     }
 
     private func shareAchievement() {
+        Analytics.shared("achievement")
         let image = makeShareImage(freed: scanner.lastFreedBytes)
         let text = L10n.shareText(fmt(scanner.lastFreedBytes))
         showSharePicker([image, text])
@@ -1208,11 +1241,13 @@ struct ContentView: View {
             let ok = await Feedback.send(message: message, contact: contact, type: type)
             feedbackSending = false
             if ok {
+                Analytics.feedbackSent(type: type)
                 feedbackSent = true
                 feedbackText = ""
                 feedbackContact = ""
                 feedbackType = "idea"
             } else {
+                Analytics.failure("feedback")
                 feedbackFailed = true
             }
         }
@@ -1564,6 +1599,7 @@ struct ContentView: View {
                     .onChange(of: launchAtLogin) { _, on in setLoginItem(on) }
                 Spacer()
                 Button {
+                    Analytics.feedbackOpened()
                     showFeedback = true
                 } label: {
                     Label(L10n.feedbackCta, systemImage: "bubble.left").font(.caption)

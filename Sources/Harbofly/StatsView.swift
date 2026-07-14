@@ -174,6 +174,7 @@ struct StatsView: View {
     // MARK: recap compartilhável
 
     private func shareRecap(_ stats: CleanStats) {
+        Analytics.shared("recap")
         let image = ShareCard.render { draw in
             draw("Harbofly Recap", .monospacedSystemFont(ofSize: 30, weight: .regular), ShareCard.muted, 605)
             draw(L10n.shareCardVerb, .systemFont(ofSize: 46, weight: .medium), ShareCard.muted, 505)

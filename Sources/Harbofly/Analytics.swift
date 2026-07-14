@@ -65,17 +65,87 @@ enum Analytics {
     }
 
     // MARK: eventos
+    //
+    // Norte: cada sinal existe pra APRENDER e MELHORAR a ferramenta pro user.
+    // Só nomes de evento, categorias genéricas de cache e métricas numéricas —
+    // nunca caminho, nome de projeto ou qualquer coisa da máquina.
 
-    /// Ativação: scan concluído. `recoverableBytes` = só o que o app apaga.
-    static func scanFinished(durationMs: Int, itemCount: Int, recoverableBytes: Int64) {
+    /// Ativação: scan concluído. `recoverableBytes` = só o que o app apaga;
+    /// `byCategory` = composição por tipo genérico (pra saber quais caches são
+    /// mais comuns/pesados na base e priorizar o roadmap); `freeRatio` = pressão
+    /// de disco (quanta dor a base sente).
+    static func scanFinished(durationMs: Int, itemCount: Int, recoverableBytes: Int64,
+                             freeRatio: Double, byCategory: [String: Int64]) {
         guard enabled else { return }
         if !UserDefaults.standard.bool(forKey: Prefs.firstScanSent) {
             UserDefaults.standard.set(true, forKey: Prefs.firstScanSent)
             signal("Scan.first")
         }
         signal("Scan.finished",
-               parameters: ["itemCount": String(itemCount), "durationMs": String(durationMs)],
+               parameters: ["itemCount": String(itemCount), "durationMs": String(durationMs),
+                            "freePct": String(Int((freeRatio * 100).rounded()))],
                floatValue: gb(recoverableBytes))
+        // Composição: presença + peso de cada categoria genérica no scan.
+        for (category, bytes) in byCategory {
+            signal("Cache.present", parameters: ["category": category], floatValue: gb(bytes))
+        }
+    }
+
+    // MARK: adoção de features (item 1) — 1x por sessão pra medir descoberta.
+    private static var featuresSeen = Set<String>()
+    static func featureUsed(_ name: String) {
+        guard enabled, started, featuresSeen.insert(name).inserted else { return }
+        signal("Feature.used", parameters: ["name": name])
+    }
+
+    /// Loop viral: compartilhou o card de conquista ou o recap do histórico.
+    static func shared(_ kind: String) {
+        guard enabled else { return }
+        signal("Share.tapped", parameters: ["kind": kind])
+    }
+
+    static func feedbackOpened() {
+        guard enabled else { return }
+        signal("Feedback.opened")
+    }
+    static func feedbackSent(type: String) {
+        guard enabled else { return }
+        signal("Feedback.sent", parameters: ["type": type])
+    }
+
+    // MARK: auto-clean (item 2)
+    /// Usuário mudou a config do auto-clean (ligar/desligar, gatilho, escopo).
+    static func autoCleanConfigured(enabled on: Bool, trigger: String, scope: String) {
+        guard enabled else { return }
+        signal("AutoClean.configured",
+               parameters: ["enabled": on ? "true" : "false", "trigger": trigger, "scope": scope])
+    }
+    /// O auto-clean disparou de verdade — quanto entregou e em que contexto.
+    static func autoCleanRan(trigger: String, scope: String, freedBytes: Int64, itemCount: Int) {
+        guard enabled else { return }
+        signal("AutoClean.ran",
+               parameters: ["trigger": trigger, "scope": scope, "itemCount": String(itemCount)],
+               floatValue: gb(freedBytes))
+    }
+
+    // MARK: duplicatas (item 3)
+    static func duplicatesScanned(groups: Int, reclaimableBytes: Int64, durationMs: Int) {
+        guard enabled else { return }
+        signal("Duplicates.scanned",
+               parameters: ["groups": String(groups), "durationMs": String(durationMs)],
+               floatValue: gb(reclaimableBytes))
+    }
+    static func duplicatesDeleted(mode: String, freedBytes: Int64, count: Int) {
+        guard enabled else { return }
+        signal("Duplicates.deleted",
+               parameters: ["mode": mode, "count": String(count)],
+               floatValue: gb(freedBytes))
+    }
+
+    /// Falhas (item 6): "delete" | "dockerPrune" | "feedback" | "duplicates".
+    static func failure(_ category: String) {
+        guard enabled else { return }
+        signal("Failure", parameters: ["category": category])
     }
 
     /// Conversão: usuário abriu o diálogo de exclusão.

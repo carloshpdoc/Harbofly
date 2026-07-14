@@ -89,15 +89,19 @@ final class DuplicateScanner: ObservableObject {
         guard !scanning, !deleting else { return }
         scanning = true
         groups = []
+        let startedAt = Date()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let found = self.findDuplicates(roots: roots) { p in
                 DispatchQueue.main.async { self.phase = p }
             }
+            let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
+            let reclaimable = found.reduce(Int64(0)) { $0 + $1.reclaimable }
             DispatchQueue.main.async {
                 self.groups = found
                 self.scanning = false
                 self.phase = nil
+                Analytics.duplicatesScanned(groups: found.count, reclaimableBytes: reclaimable, durationMs: ms)
             }
         }
     }
@@ -130,6 +134,8 @@ final class DuplicateScanner: ObservableObject {
                 }
                 CleanLog.record(bytes: freedFinal, count: deleted.count,
                                 byCategory: ["duplicates": freedFinal])
+                Analytics.duplicatesDeleted(mode: permanently ? "permanent" : "trash",
+                                            freedBytes: freedFinal, count: deleted.count)
                 self.lastFreedBytes = freedFinal
                 self.deleting = false
                 self.justFinished = true
