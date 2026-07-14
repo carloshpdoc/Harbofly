@@ -152,6 +152,9 @@ final class DiskScanner: ObservableObject {
     @Published var deleting = false
     @Published var deletingDone = 0
     @Published var deletingTotal = 0
+    /// Resultado da última tentativa de apagar simuladores indisponíveis:
+    /// nil = não rodou; 0 = nenhum encontrado; N = quantos foram apagados.
+    @Published var simDeleteDone: Int?
 
     /// Evita disparar a notificação de disco baixo repetidamente: só notifica
     /// quando o espaço livre CRUZA pra baixo do limite.
@@ -746,15 +749,42 @@ final class DiskScanner: ObservableObject {
     /// Lixeira) — a UI pede confirmação em dois cliques. Re-escaneia ao fim.
     func deleteUnavailableSimulators() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-            p.arguments = ["simctl", "delete", "unavailable"]
-            p.standardOutput = Pipe()
-            p.standardError = Pipe()
-            try? p.run()
-            p.waitUntilExit()
-            DispatchQueue.main.async { self?.scan() }
+            // Conta os indisponíveis PRIMEIRO: o comando só apaga simuladores de
+            // runtimes sumidos (órfãos). Se não há nenhum, ele roda mas libera
+            // zero — então damos feedback ("nenhum encontrado") em vez de parecer
+            // quebrado. Os simuladores DISPONÍVEIS (o grosso do espaço) não são
+            // tocados: isso se gerencia no Xcode, e por isso é tier informativo.
+            let count = self?.unavailableSimulatorCount() ?? 0
+            if count > 0 {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+                p.arguments = ["simctl", "delete", "unavailable"]
+                p.standardOutput = Pipe()
+                p.standardError = Pipe()
+                try? p.run()
+                p.waitUntilExit()
+            }
+            DispatchQueue.main.async {
+                self?.simDeleteDone = count
+                if count > 0 { self?.scan() }
+            }
         }
+    }
+
+    /// Nº de simuladores de runtimes indisponíveis (o que o comando apagaria).
+    private func unavailableSimulatorCount() -> Int {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = ["simctl", "list", "devices", "unavailable", "-j"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return 0 }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let devices = json["devices"] as? [String: [[String: Any]]] else { return 0 }
+        return devices.values.reduce(0) { $0 + $1.count }
     }
 
     // MARK: notificação de disco baixo
@@ -1529,6 +1559,7 @@ struct ContentView: View {
                                 Analytics.infoAction("deleteOldSims")
                                 scanner.deleteUnavailableSimulators()
                             } else {
+                                scanner.simDeleteDone = nil   // limpa feedback antigo
                                 confirmingSimDelete = true
                             }
                         } label: {
@@ -1541,6 +1572,14 @@ struct ContentView: View {
                     }
                 }
                 .padding(.top, 2)
+                // Feedback do simctl: sem isso, quando não há indisponível o
+                // clique não muda nada e parece quebrado.
+                if t.url.path.hasSuffix("Developer/CoreSimulator"), let n = scanner.simDeleteDone {
+                    Text(n > 0 ? L10n.simDeleted(n) : L10n.simNoneToDelete)
+                        .font(.caption)
+                        .foregroundStyle(n > 0 ? .green : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .padding(10)

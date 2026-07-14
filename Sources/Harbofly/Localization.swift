@@ -150,7 +150,13 @@ struct L {
     var tierInfo: String { s("🔵 Informativo: só pra você saber (o app não apaga)", "🔵 Info: just so you know (the app doesn't delete)", es: "🔵 Informativo: solo para que lo sepas (la app no borra)", fr: "🔵 Info : juste pour information (l'app ne supprime pas)", de: "🔵 Info: nur zur Kenntnis (die App löscht nichts)", zh: "🔵 信息：仅供参考（应用不会删除）") }
     var revealInFinder: String { s("Revelar no Finder", "Reveal in Finder", es: "Mostrar en el Finder", fr: "Afficher dans le Finder", de: "Im Finder zeigen", zh: "在访达中显示") }
     var deleteOldSims: String { s("Apagar simuladores antigos", "Delete old simulators", es: "Borrar simuladores antiguos", fr: "Supprimer les anciens simulateurs", de: "Alte Simulatoren löschen", zh: "删除旧模拟器") }
-    var deleteOldSimsConfirm: String { s("Tem certeza? Remove de vez (simctl delete unavailable)", "Are you sure? Removes permanently (simctl delete unavailable)", es: "¿Seguro? Se eliminan de forma permanente (simctl delete unavailable)", fr: "Sûr ? Suppression définitive (simctl delete unavailable)", de: "Sicher? Endgültiges Löschen (simctl delete unavailable)", zh: "确定吗？将永久删除（simctl delete unavailable）") }
+    var deleteOldSimsConfirm: String { s("Apagar de vez? (irreversível)", "Delete for good? (irreversible)", es: "¿Borrar del todo? (irreversible)", fr: "Supprimer définitivement ?", de: "Endgültig löschen?", zh: "彻底删除？（不可恢复）") }
+    var simNoneToDelete: String { s("Nenhum simulador indisponível pra apagar. O espaço aqui é de simuladores em uso — gerencie-os no Xcode.", "No unavailable simulators to delete. The space here is from simulators in use — manage them in Xcode.", es: "No hay simuladores no disponibles que borrar. El espacio aquí es de simuladores en uso — gestiónalos en Xcode.", fr: "Aucun simulateur indisponible à supprimer. L'espace ici vient de simulateurs utilisés — gérez-les dans Xcode.", de: "Keine nicht verfügbaren Simulatoren zum Löschen. Der Speicher hier stammt von genutzten Simulatoren — verwalte sie in Xcode.", zh: "没有可删除的不可用模拟器。这里的空间来自正在使用的模拟器——请在 Xcode 中管理。") }
+    func simDeleted(_ count: Int) -> String {
+        s("\(count) simulador(es) indisponível(is) apagado(s).", "Deleted \(count) unavailable simulator(s).",
+          es: "Se borraron \(count) simulador(es) no disponible(s).", fr: "\(count) simulateur(s) indisponible(s) supprimé(s).",
+          de: "\(count) nicht verfügbare(r) Simulator(en) gelöscht.", zh: "已删除 \(count) 个不可用模拟器。")
+    }
 
     // MARK: projetos parados (staleness)
     func staleProject(days: Int) -> String {
