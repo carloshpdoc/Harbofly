@@ -33,12 +33,16 @@ enum ShareCard {
     }
 }
 
-/// Abre o share sheet nativo ancorado na janela ativa.
-@MainActor
+/// Abre o share sheet nativo ancorado na janela ativa. Nonisolated (chamado de
+/// métodos de View nonisolated); o AppKit roda dentro de `assumeIsolated` pra
+/// satisfazer o strict-concurrency sem forçar os chamadores a virar @MainActor
+/// (evita erro de isolamento no toolchain do CI).
 func showSharePicker(_ items: [Any]) {
-    let picker = NSSharingServicePicker(items: items)
-    if let view = NSApp.keyWindow?.contentView {
-        picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
+    MainActor.assumeIsolated {
+        let picker = NSSharingServicePicker(items: items)
+        if let view = NSApp.keyWindow?.contentView {
+            picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
+        }
     }
 }
 
