@@ -4,7 +4,7 @@
 
 🇧🇷 Português · [🇺🇸 English](README.md)
 
-> **A limpeza de disco feita pra quem programa.** Recupere 20-100 GB de Xcode, Docker, node_modules e caches de build, com segurança. → [harbofly.app](https://harbofly.app)
+> **A limpeza de disco feita pra quem programa.** Recupere 20-100 GB de node_modules, Docker, Gradle, Xcode e caches de build, com segurança. → [harbofly.app](https://harbofly.app)
 
 App de barra de menu pro macOS que **descobre sozinho** o que está ocupando seu disco e deixa você limpar com um clique, sem configurar path nenhum.
 

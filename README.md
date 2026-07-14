@@ -4,7 +4,7 @@
 
 [🇧🇷 Português](README.pt-BR.md) · 🇺🇸 English
 
-> **The disk cleaner built for developers.** Recover 20-100 GB from Xcode, Docker, node_modules and build caches, safely. → [harbofly.app](https://harbofly.app)
+> **The disk cleaner built for developers.** Recover 20-100 GB from node_modules, Docker, Gradle, Xcode and build caches, safely. → [harbofly.app](https://harbofly.app)
 
 A macOS menu-bar app that **finds on its own** what's eating your disk and lets you clean it in one click, with zero path configuration.
 

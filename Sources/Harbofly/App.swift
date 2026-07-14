@@ -43,7 +43,8 @@ enum Prefs {
     static let staleThresholdDays = 90
     // Auto-clean (opt-in): limpa 🟢 seguros sozinho, sempre pra Lixeira.
     static let autoCleanEnabled = "autoCleanEnabled"
-    static let autoCleanTrigger = "autoCleanTrigger" // "xcode" | "daily" | "weekly" | "lowdisk"
+    // "daily" (= fim do dia, default) | "startofday" | "xcode" | "weekly" | "lowdisk"
+    static let autoCleanTrigger = "autoCleanTrigger"
     // Escopo do auto-clean, em escada de custo de rebuild:
     // "caches" = só caches de ferramentas (re-baixam sob demanda);
     // "all"    = + artifacts/DerivedData de projetos PARADOS (default);
@@ -577,7 +578,7 @@ final class DiskScanner: ObservableObject {
     func autoCleanIfDue(fromXcodeQuit: Bool) {
         let d = UserDefaults.standard
         guard d.bool(forKey: Prefs.autoCleanEnabled) else { return }
-        let trigger = d.string(forKey: Prefs.autoCleanTrigger) ?? "xcode"
+        let trigger = d.string(forKey: Prefs.autoCleanTrigger) ?? "daily"
         let elapsed = Date().timeIntervalSince1970 - d.double(forKey: Prefs.autoCleanLastRun)
         if fromXcodeQuit {
             guard trigger == "xcode", elapsed >= 3_600 else { return }
@@ -739,7 +740,7 @@ struct ContentView: View {
     @AppStorage(Prefs.donateSnoozeCount) private var donateSnoozeCount = 0
     @AppStorage(Prefs.totalFreedBytes) private var totalFreedBytes = 0
     @AppStorage(Prefs.autoCleanEnabled) private var autoCleanEnabled = false
-    @AppStorage(Prefs.autoCleanTrigger) private var autoCleanTrigger = "xcode"
+    @AppStorage(Prefs.autoCleanTrigger) private var autoCleanTrigger = "daily"
     @AppStorage(Prefs.autoCleanScope) private var autoCleanScope = "all"
     @AppStorage(Prefs.autoCleanMinBytes) private var autoCleanMinBytes = Prefs.autoCleanMinBytesDefault
     @AppStorage(Prefs.autoCleanLastCleanTs) private var autoCleanLastCleanTs = 0.0
