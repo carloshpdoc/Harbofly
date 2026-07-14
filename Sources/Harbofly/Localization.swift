@@ -222,9 +222,12 @@ struct L {
     var langSystem: String { s("Sistema", "System", es: "Sistema", fr: "Système", de: "System", zh: "跟随系统") }
 
     // MARK: feedback
-    var feedbackCta: String { s("Feedback", "Feedback", es: "Comentarios", fr: "Votre avis", de: "Feedback", zh: "反馈") }
-    var feedbackTitle: String { s("Enviar feedback", "Send feedback", es: "Enviar comentarios", fr: "Donner votre avis", de: "Feedback senden", zh: "发送反馈") }
+    var feedbackCta: String { s("Fala com o dev", "Talk to the dev", es: "Habla con el dev", fr: "Parle au dev", de: "Schreib dem Dev", zh: "找开发者聊聊") }
+    var feedbackTitle: String { s("Fala com o dev", "Talk to the dev", es: "Habla con el dev", fr: "Parle au dev", de: "Schreib dem Dev", zh: "找开发者聊聊") }
     var feedbackSubtitle: String { s("Bug, ideia ou sugestão — vai direto pro criador do app.", "Bug, idea or suggestion — goes straight to the app's creator.", es: "Bug, idea o sugerencia — va directo al creador de la app.", fr: "Bug, idée ou suggestion — envoyé directement au créateur de l'app.", de: "Bug, Idee oder Vorschlag — geht direkt an den Entwickler der App.", zh: "Bug、想法或建议——直接发送给应用的开发者。") }
+    var feedbackTypeBug: String { s("Bug", "Bug", es: "Fallo", fr: "Bug", de: "Fehler", zh: "问题") }
+    var feedbackTypeIdea: String { s("Ideia", "Idea", es: "Idea", fr: "Idée", de: "Idee", zh: "想法") }
+    var feedbackTypeOther: String { s("Outro", "Other", es: "Otro", fr: "Autre", de: "Sonstiges", zh: "其他") }
     var feedbackContactPlaceholder: String { s("Email pra resposta (opcional)", "Email for a reply (optional)", es: "Email para respuesta (opcional)", fr: "E-mail pour une réponse (facultatif)", de: "E-Mail für Antwort (optional)", zh: "回复邮箱（选填）") }
     var feedbackSend: String { s("Enviar", "Send", es: "Enviar", fr: "Envoyer", de: "Senden", zh: "发送") }
     var feedbackSending: String { s("Enviando…", "Sending…", es: "Enviando…", fr: "Envoi…", de: "Wird gesendet…", zh: "发送中…") }

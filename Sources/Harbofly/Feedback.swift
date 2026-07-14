@@ -10,14 +10,16 @@ enum Feedback {
     private static let endpoint = URL(string: "https://svhwphsqvijwokorlvcd.supabase.co/rest/v1/harbofly_feedback")!
     private static let apiKey = "sb_publishable_01VsB0GhQn6jBTiWbPERXw_ALRVjbp-"
 
-    /// POST do feedback. Retorna true se o servidor aceitou (2xx).
-    static func send(message: String, contact: String) async -> Bool {
+    /// POST do feedback. `type` é "bug" | "idea" | "other" pra segmentar os
+    /// insights. Retorna true se o servidor aceitou (2xx).
+    static func send(message: String, contact: String, type: String) async -> Bool {
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
 
         let os = ProcessInfo.processInfo.operatingSystemVersion
         var body: [String: String] = [
             "message": String(text.prefix(4000)),
+            "type": type,
             "app_version": AppInfo.version,
             "build": AppInfo.build,
             "os_version": "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",

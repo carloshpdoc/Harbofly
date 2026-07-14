@@ -720,6 +720,8 @@ struct ContentView: View {
     @State private var showFeedback = false
     @State private var feedbackText = ""
     @State private var feedbackContact = ""
+    /// Categoria do feedback: "bug" | "idea" | "other" (segmenta os insights).
+    @State private var feedbackType = "idea"
     @State private var feedbackSending = false
     @State private var feedbackSent = false
     @State private var feedbackFailed = false
@@ -1152,6 +1154,13 @@ struct ContentView: View {
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    Picker("", selection: $feedbackType) {
+                        Text(L10n.feedbackTypeBug).tag("bug")
+                        Text(L10n.feedbackTypeIdea).tag("idea")
+                        Text(L10n.feedbackTypeOther).tag("other")
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+
                     TextEditor(text: $feedbackText)
                         .font(.body)
                         .frame(height: 90)
@@ -1193,14 +1202,15 @@ struct ContentView: View {
     private func sendFeedback() {
         feedbackFailed = false
         feedbackSending = true
-        let message = feedbackText, contact = feedbackContact
+        let message = feedbackText, contact = feedbackContact, type = feedbackType
         Task { @MainActor in
-            let ok = await Feedback.send(message: message, contact: contact)
+            let ok = await Feedback.send(message: message, contact: contact, type: type)
             feedbackSending = false
             if ok {
                 feedbackSent = true
                 feedbackText = ""
                 feedbackContact = ""
+                feedbackType = "idea"
             } else {
                 feedbackFailed = true
             }
