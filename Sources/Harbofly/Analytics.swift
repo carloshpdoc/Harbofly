@@ -148,6 +148,72 @@ enum Analytics {
         signal("Failure", parameters: ["category": category])
     }
 
+    // MARK: TIER 1 — descoberta de features
+
+    /// Composição do público: toolchains que o user TEM (mesmo sem limpar),
+    /// pra saber se a base é iOS/web/Android/AI e priorizar o roadmap. 1x/sessão.
+    private static var ecosystemsSent = false
+    static func ecosystems(_ list: [String]) {
+        guard enabled, started, !ecosystemsSent, !list.isEmpty else { return }
+        ecosystemsSent = true
+        signal("App.ecosystems", parameters: ["list": list.sorted().joined(separator: ",")])
+    }
+
+    /// Caches grandes que o app NÃO reconhece — só contagem + total, SEM nomes,
+    /// pra nunca vazar o bundle-id de um app próprio do dev. Sinaliza que há
+    /// alvo novo a ganhar; a versão nomeada exigiria uma allowlist curada.
+    static func cacheUnrecognized(count: Int, totalBytes: Int64) {
+        guard enabled, count > 0 else { return }
+        signal("Cache.unrecognized", parameters: ["count": String(count)], floatValue: gb(totalBytes))
+    }
+
+    /// Funil de decisão: categorias que o user SELECIONOU ao abrir o diálogo
+    /// (cruzado com Delete.confirmed dá o abandono por categoria).
+    static func deleteSelected(byCategory: [String: Int64]) {
+        guard enabled else { return }
+        for (category, bytes) in byCategory {
+            signal("Delete.selected", parameters: ["category": category], floatValue: gb(bytes))
+        }
+    }
+
+    // MARK: TIER 2 — valor e retenção
+
+    /// Funil da oferta proativa: "shown" | "accepted" | "snoozed".
+    static func offer(_ action: String) {
+        guard enabled else { return }
+        signal("Offer.\(action)")
+    }
+
+    /// Estado do Docker no scan: "running" | "off" (engine desligado, valor
+    /// perdido) | "absent". Alimenta um possível nudge "ligue o Docker".
+    static func dockerState(_ state: String) {
+        guard enabled else { return }
+        signal("Docker.state", parameters: ["state": state])
+    }
+
+    // MARK: TIER 3 — fricção e ações do tier informativo
+
+    /// Ações no tier 🔵 informativo: "revealInFinder" | "deleteOldSims".
+    static func infoAction(_ name: String) {
+        guard enabled else { return }
+        signal("Info.\(name)")
+    }
+
+    // MARK: capacidade — tempo em cada aba (duration signals do SDK)
+
+    private static var currentPane: String?
+    /// Fecha a duração da aba anterior e abre a da nova. Emite `Pane.duration`
+    /// com o nome da aba que foi deixada e quanto tempo ficou nela.
+    @MainActor
+    static func paneSwitched(to name: String) {
+        guard enabled, started else { return }
+        if currentPane != nil {
+            TelemetryDeck.stopAndSendDurationSignal("Pane.duration")
+        }
+        currentPane = name
+        TelemetryDeck.startDurationSignal("Pane.duration", parameters: ["name": name])
+    }
+
     /// Conversão: usuário abriu o diálogo de exclusão.
     static func deleteClicked(mode: String, itemCount: Int) {
         guard enabled else { return }

@@ -160,6 +160,10 @@ final class DiskScanner: ObservableObject {
     private let home = FileManager.default.homeDirectoryForCurrentUser
     private let minBytes: Int64 = 10_000_000 // ignora ruído < 10 MB
 
+    /// Telemetria de "paisagem" (ecossistemas + caches não reconhecidos): 1x
+    /// por execução do app, pra não repetir o sizing pesado a cada scan.
+    private var landscapeReported = false
+
     /// true = ao final do scan corrente, roda a limpeza automática.
     private var pendingAutoClean = false
     private var autoCleanTimer: Timer?
@@ -196,6 +200,18 @@ final class DiskScanner: ObservableObject {
             guard let self = self else { return }
             let (free, total) = self.diskSpace()
             let found = self.collectAll()
+            // Telemetria de "paisagem" (só com opt-in). Docker é por scan (barato,
+            // já probado); ecossistemas + caches não reconhecidos rodam 1x por
+            // execução do app pra não pagar o sizing de ~/Library/Caches todo scan.
+            if Analytics.enabled {
+                Analytics.dockerState(self.lastDockerState)
+                if !self.landscapeReported {
+                    self.landscapeReported = true
+                    Analytics.ecosystems(self.detectedEcosystems())
+                    let unrec = self.unrecognizedCaches()
+                    Analytics.cacheUnrecognized(count: unrec.count, totalBytes: unrec.bytes)
+                }
+            }
             DispatchQueue.main.async {
                 self.freeBytes = free
                 self.totalBytes = total
@@ -573,20 +589,64 @@ final class DiskScanner: ObservableObject {
 
     /// Docker/OrbStack: mede o recuperável real via engine (não o disk image).
     /// Tier caution porque prune é irreversível e não passa pela Lixeira.
+    /// Estado do engine no último scan (telemetria "off" = valor não recuperado).
+    private(set) var lastDockerState = "absent"
+
     private func scanDocker() -> [CleanTarget] {
         switch DockerEngine.probe() {
         case .absent:
+            lastDockerState = "absent"
             return []
         case .running(let reclaimable, let image):
+            lastDockerState = "running"
             guard reclaimable > minBytes else { return [] }
             let url = image ?? DockerEngine.binary() ?? home
             return [CleanTarget(url: url, labelKey: \.dockerLabel, detailKey: \.dockerDetail,
                                 tier: .caution, bytes: reclaimable, isDocker: true)]
         case .stopped(let bytes, let image):
+            lastDockerState = "off"
             guard bytes > minBytes, let image = image else { return [] }
             return [CleanTarget(url: image, labelKey: \.dockerStoppedLabel,
                                 detailKey: \.dockerStoppedDetail, tier: .info, bytes: bytes)]
         }
+    }
+
+    /// TIER 1 — toolchains que o user TEM (existência de marcadores, sem tamanho).
+    /// Genérico, nunca caminho/projeto. Roda só com analytics ligado.
+    private func detectedEcosystems() -> [String] {
+        let fm = FileManager.default
+        let markers: [(String, String)] = [
+            ("Xcode", "Library/Developer/Xcode"), ("node", ".npm"), ("Bun", ".bun"),
+            ("Cargo", ".cargo"), ("Go", "go/pkg"), ("Gradle", ".gradle"),
+            ("Maven", ".m2"), ("CocoaPods", ".cocoapods"), ("Flutter", ".pub-cache"),
+            ("Android", "Library/Android"), ("Ollama", ".ollama"),
+            ("HuggingFace", ".cache/huggingface"), ("LMStudio", ".lmstudio"),
+            ("JetBrains", "Library/Caches/JetBrains"), ("VSCode", "Library/Application Support/Code"),
+            ("Homebrew", "Library/Caches/Homebrew"),
+        ]
+        var found = markers.filter { fm.fileExists(atPath: home.appendingPathComponent($1).path) }
+            .map { $0.0 }
+        if lastDockerState != "absent" { found.append("Docker") }
+        return found
+    }
+
+    /// TIER 1 — caches grandes em ~/Library/Caches que não reconhecemos: só
+    /// contagem + total (sem nomes, pra não vazar bundle-id de app próprio).
+    private func unrecognizedCaches() -> (count: Int, bytes: Int64) {
+        let caches = home.appendingPathComponent("Library/Caches")
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: caches, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        ) else { return (0, 0) }
+        let known: Set<String> = ["org.swift.swiftpm", "CocoaPods", "Homebrew", "Yarn", "pnpm",
+                                   "pip", "uv", "go-build", "JetBrains", "ms-playwright", "Google"]
+        var count = 0, total: Int64 = 0
+        for item in items {
+            let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            guard isDir, !known.contains(item.lastPathComponent) else { continue }
+            let b = size(of: item)
+            if b >= 500_000_000 { count += 1; total += b }
+        }
+        return (count, total)
     }
 
     // MARK: auto-clean
@@ -853,10 +913,13 @@ struct ContentView: View {
         .frame(width: 470)
         .onAppear {
             launchAtLogin = (SMAppService.mainApp.status == .enabled)
+            Analytics.paneSwitched(to: "cleaner")
             if scanner.targets.isEmpty { scanner.scan() }
         }
         .onReceive(timer) { _ in scanner.scan() }
         .onChange(of: pane) { _, p in
+            let name = p == .cleaner ? "cleaner" : (p == .duplicates ? "duplicates" : "history")
+            Analytics.paneSwitched(to: name)     // tempo em cada aba
             if p == .duplicates { Analytics.featureUsed("duplicates") }
             else if p == .stats { Analytics.featureUsed("history") }
         }
@@ -870,6 +933,7 @@ struct ContentView: View {
             // No pico de valor (acabou de limpar), ou oferece automatizar (se
             // ainda faz na mão), ou cai no card de conquista/apoio de sempre.
             if shouldOfferAutoClean {
+                Analytics.offer("shown")
                 showAutoOffer = true
             } else {
                 pixCopied = false
@@ -918,6 +982,7 @@ struct ContentView: View {
     /// direto da oferta proativa. A UI de config no rodapé fica disponível
     /// pra ajustar depois.
     private func acceptAutoOffer() {
+        Analytics.offer("accepted")
         autoCleanEnabled = true
         autoCleanTrigger = "daily"   // = "No fim do dia"
         autoCleanScope = "caches"
@@ -926,6 +991,7 @@ struct ContentView: View {
 
     /// "Agora não" na oferta: adia por intervalo crescente (mesma escada da doação).
     private func snoozeAutoOffer() {
+        Analytics.offer("snoozed")
         let days = Prefs.snoozeDays[min(autoOfferSnoozeCount, Prefs.snoozeDays.count - 1)]
         autoOfferSnoozeUntil = Date().timeIntervalSince1970 + days * 86_400
         autoOfferSnoozeCount += 1
@@ -1446,6 +1512,7 @@ struct ContentView: View {
                     // no Finder não diz nada — esconde o botão nesse caso.
                     if t.url != FileManager.default.homeDirectoryForCurrentUser {
                         Button {
+                            Analytics.infoAction("revealInFinder")
                             NSWorkspace.shared.activateFileViewerSelecting([t.url])
                         } label: {
                             Label(L10n.revealInFinder, systemImage: "magnifyingglass").font(.caption)
@@ -1459,6 +1526,7 @@ struct ContentView: View {
                         Button {
                             if confirmingSimDelete {
                                 confirmingSimDelete = false
+                                Analytics.infoAction("deleteOldSims")
                                 scanner.deleteUnavailableSimulators()
                             } else {
                                 confirmingSimDelete = true
@@ -1514,6 +1582,9 @@ struct ContentView: View {
                     Button {
                         Analytics.deleteClicked(mode: deletePermanently ? "permanent" : "trash",
                                                 itemCount: selection.count)
+                        let cats = Dictionary(grouping: selectedTargets, by: { $0.category })
+                            .mapValues { $0.reduce(Int64(0)) { $0 + $1.bytes } }
+                        Analytics.deleteSelected(byCategory: cats)
                         confirming = true
                     } label: {
                         Text(selection.isEmpty ? L10n.delete : L10n.deleteWithSize(fmt(selectedBytes)))
