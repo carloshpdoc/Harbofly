@@ -45,6 +45,40 @@ enum CleanLog {
     }
 }
 
+/// Snapshots do tamanho da paisagem (categoria -> bytes) ao longo do tempo.
+/// Base da detecção de crescimento: diffar o agora contra um snapshot antigo
+/// revela o que encheu o disco em silêncio (um `~/.git` novo, o `uv` crescendo).
+enum SizeLog {
+    struct Snap { let ts: Double; let cats: [String: Int64] }
+    static let maxSnaps = 60
+    /// No máx 1 snapshot a cada 6h — vários scans/dia não incham o defaults.
+    static let minInterval = 21_600.0
+
+    static func record(_ cats: [String: Int64], now: Double) {
+        guard !cats.isEmpty else { return }
+        let d = UserDefaults.standard
+        var raw = d.array(forKey: Prefs.sizeHistory) as? [[String: Any]] ?? []
+        if let lastTs = raw.first?["ts"] as? Double, now - lastTs < minInterval { return }
+        raw.insert(["ts": now, "cats": cats.mapValues { Double($0) }], at: 0)
+        d.set(Array(raw.prefix(maxSnaps)), forKey: Prefs.sizeHistory)
+    }
+
+    /// Mais novos primeiro.
+    static func snaps() -> [Snap] {
+        let raw = UserDefaults.standard.array(forKey: Prefs.sizeHistory) as? [[String: Any]] ?? []
+        return raw.compactMap { e in
+            guard let ts = e["ts"] as? Double else { return nil }
+            let cats = (e["cats"] as? [String: Double] ?? [:]).mapValues { Int64($0) }
+            return Snap(ts: ts, cats: cats)
+        }
+    }
+
+    /// Snapshot mais antigo com pelo menos `minAgeDays` de idade (baseline do diff).
+    static func baseline(now: Double, minAgeDays: Double) -> Snap? {
+        snaps().filter { now - $0.ts >= minAgeDays * 86_400 }.last
+    }
+}
+
 /// Agregados do histórico pro painel "Histórico" e pro card de recap.
 struct CleanStats {
     /// Vida toda — inclui limpezas anteriores ao histórico detalhado.
@@ -57,9 +91,9 @@ struct CleanStats {
     /// Últimas 12 semanas, da mais antiga pra atual.
     let weekly: [Int64]
 
-    /// Preço público da Apple por upgrade de SSD: US$ 200 por 512 GB.
-    static let usdPerByte = 200.0 / (512.0 * 1_000_000_000.0)
-    var savedUSD: Double { Double(totalBytes) * Self.usdPerByte }
+    /// Valor equivalente em SSD da Apple que você deixou de comprar, na moeda da
+    /// sua região (ver SSDPricing). Offline, atualizável por release.
+    var savedMoney: Double { Double(totalBytes) * SSDPricing.perByte }
 
     static func compute() -> CleanStats {
         let entries = CleanLog.entries()
@@ -83,11 +117,43 @@ struct CleanStats {
     }
 }
 
-/// "US$ 117" / "$117" — moeda em dólar (preço da Apple), agrupamento no locale.
-func fmtUSD(_ value: Double) -> String {
+/// Preço de tabela da Apple por upgrade de SSD, por região, na moeda local.
+/// OFFLINE e fonte única: sem scraping/rede — a Apple não expõe API de preço, e
+/// um cleaner privacy-first não deve abrir conexão por um número aproximado. Se
+/// mudar, sai no próximo release (o app já se auto-atualiza via Sparkle). Preços
+/// = tier de 512 GB de upgrade no Apple Store de cada região (arredondados).
+enum SSDPricing {
+    /// (preço por 512 GB de upgrade, código da moeda).
+    static let table: [String: (price: Double, currency: String)] = [
+        "US": (200, "USD"),
+        "BR": (1500, "BRL"),
+        "GB": (200, "GBP"),
+        "DE": (230, "EUR"), "FR": (230, "EUR"), "ES": (230, "EUR"),
+        "IT": (230, "EUR"), "PT": (230, "EUR"), "NL": (230, "EUR"), "IE": (230, "EUR"),
+        "CA": (250, "CAD"),
+        "AU": (300, "AUD"),
+        "JP": (30000, "JPY"),
+        "CN": (1500, "CNY"),
+        "IN": (20000, "INR"),
+        "MX": (4000, "MXN"),
+    ]
+    static let fallback: (price: Double, currency: String) = (200, "USD")
+
+    /// Preço/moeda da região atual do usuário (cai pro dólar quando não mapeado).
+    static var current: (price: Double, currency: String) {
+        let region = Locale.current.region?.identifier ?? "US"
+        return table[region] ?? fallback
+    }
+    /// Valor por byte recuperado (preço de 512 GB ÷ 512 GB).
+    static var perByte: Double { current.price / (512.0 * 1_000_000_000.0) }
+}
+
+/// "US$ 117" / "R$ 550" — na moeda da região atual (preço de SSD da Apple),
+/// agrupamento pelo locale. Passe `code` pra forçar outra moeda.
+func fmtMoney(_ value: Double, code: String = SSDPricing.current.currency) -> String {
     let f = NumberFormatter()
     f.numberStyle = .currency
-    f.currencyCode = "USD"
+    f.currencyCode = code
     f.maximumFractionDigits = 0
-    return f.string(from: NSNumber(value: value)) ?? "US$\(Int(value))"
+    return f.string(from: NSNumber(value: value)) ?? "\(code) \(Int(value))"
 }

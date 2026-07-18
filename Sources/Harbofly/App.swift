@@ -78,6 +78,9 @@ enum Prefs {
     static let totalFreedBytes = "totalFreedBytes"
     /// Histórico detalhado de limpezas (ver CleanLog em Stats.swift).
     static let cleanHistory = "cleanHistory"
+    /// Snapshots do tamanho da paisagem por categoria (ver SizeLog): base pra
+    /// detecção de crescimento ("X apareceu / cresceu +Y desde…").
+    static let sizeHistory = "sizeHistory"
     // Oferta proativa de auto-clean: depois de N limpezas manuais, convida a
     // automatizar (mesma cadência de snooze crescente da doação).
     static let manualCleanCount = "manualCleanCount"
@@ -130,6 +133,9 @@ struct CleanTarget: Identifiable {
     var unsavedWork = false
     /// Alvo do Docker: a ação é `docker system prune` (irreversível), não Lixeira.
     var isDocker = false
+    /// Linha do purgeable quando há snapshots locais do Time Machine: habilita o
+    /// botão de thinning (recupera o espaço que o macOS só liberaria sob pressão).
+    var canThinSnapshots = false
 }
 
 func fmt(_ bytes: Int64) -> String {
@@ -155,6 +161,12 @@ final class DiskScanner: ObservableObject {
     /// Resultado da última tentativa de apagar simuladores indisponíveis:
     /// nil = não rodou; 0 = nenhum encontrado; N = quantos foram apagados.
     @Published var simDeleteDone: Int?
+    /// Runtimes de simulador não usados apagados no último clique (nil = não rodou).
+    @Published var runtimeDeleteDone: Int?
+    /// Bytes liberados no último "esvaziar Lixeira" (nil = não rodou).
+    @Published var trashEmptiedBytes: Int64?
+    /// Nº de alertas de crescimento no último scan — badge do vigia no menu-bar.
+    @Published var growthCount = 0
 
     /// Evita disparar a notificação de disco baixo repetidamente: só notifica
     /// quando o espaço livre CRUZA pra baixo do limite.
@@ -170,6 +182,8 @@ final class DiskScanner: ObservableObject {
     /// true = ao final do scan corrente, roda a limpeza automática.
     private var pendingAutoClean = false
     private var autoCleanTimer: Timer?
+    /// Refresh leve do espaço livre pro % do menu-bar (statfs, sem scan).
+    private var diskTimer: Timer?
 
     /// `autoTriggers: false` = modo CLI: sem observers, timers ou notificações.
     init(autoTriggers: Bool = true) {
@@ -192,6 +206,18 @@ final class DiskScanner: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
             self?.autoCleanIfDue(fromXcodeQuit: false)
         }
+        // % do menu-bar vivo sem pagar scan: statfs a cada 3 min é barato.
+        diskTimer = Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in
+            self?.refreshDiskSpace()
+        }
+        refreshDiskSpace()
+    }
+
+    /// Atualiza só free/total (statfs) sem escanear — barato, pro vigia do menu-bar.
+    func refreshDiskSpace() {
+        let (free, total) = diskSpace()
+        freeBytes = free
+        totalBytes = total
     }
 
     func scan() {
@@ -203,6 +229,9 @@ final class DiskScanner: ObservableObject {
             guard let self = self else { return }
             let (free, total) = self.diskSpace()
             let found = self.collectAll()
+            // Detecção de crescimento: diffa a paisagem atual contra o snapshot
+            // e grava o novo. Fora do collectAll pra não pesar no modo CLI.
+            let growth = self.growthAlerts(from: found)
             // Telemetria de "paisagem" (só com opt-in). Docker é por scan (barato,
             // já probado); ecossistemas + caches não reconhecidos rodam 1x por
             // execução do app pra não pagar o sizing de ~/Library/Caches todo scan.
@@ -218,7 +247,8 @@ final class DiskScanner: ObservableObject {
             DispatchQueue.main.async {
                 self.freeBytes = free
                 self.totalBytes = total
-                self.targets = found
+                self.targets = growth + found
+                self.growthCount = growth.count
                 self.lastScan = Date()
                 self.scanning = false
                 self.checkLowSpaceNotification()
@@ -292,7 +322,11 @@ final class DiskScanner: ObservableObject {
                 Analytics.deleteConfirmed(mode: permanently ? "permanent" : "trash",
                                           freedBytes: freedFinal, itemCount: countFinal, byCategory: categories)
                 if failed { Analytics.failure("delete") }
-                self?.scan()
+                // Sem rescan completo: os itens já saíram da lista um a um, então
+                // só atualizamos o disponível real (statfs) — reflete na hora o que
+                // foi de fato liberado. Deleção permanente sobe o livre; Lixeira
+                // não (o espaço só volta ao esvaziar). Rescan manual pelo botão.
+                self?.refreshDiskSpace()
             }
         }
     }
@@ -302,7 +336,13 @@ final class DiskScanner: ObservableObject {
     func collectAll() -> [CleanTarget] {
         unsavedCache.removeAll()
         var found = scanDevelopment() + scanDerivedData() + scanLibrary()
-            + scanInfo() + scanDocker()
+            + scanInfo() + scanDocker() + scanCacheHome() + scanStrayGit()
+            + scanDeviceSupportVersions() + scanOrphanedLeftovers() + scanGitBloat()
+            + scanBigFiles() + scanTrash() + scanOrphanedAppData() + scanVMDisks()
+        // Dedupe por path: scanners podem se sobrepor (ex.: órfão curado vs
+        // generalizado no mesmo bundle-id). Mantém a primeira ocorrência.
+        var seen = Set<String>()
+        found = found.filter { seen.insert($0.url.path).inserted }
         found.sort { $0.bytes > $1.bytes }
         return found
     }
@@ -341,8 +381,25 @@ final class DiskScanner: ObservableObject {
     /// Descobre sozinho build artifacts sob ~/Development (sem config de path).
     private func scanDevelopment() -> [CleanTarget] {
         let dev = home.appendingPathComponent("Development")
-        let names: Set<String> = ["build", ".build", "node_modules", "Pods", "DerivedData"]
+        let names: Set<String> = ["build", ".build", "node_modules", "Pods", "DerivedData",
+                                  ".venv", "venv", ".next", ".turbo", ".parcel-cache",
+                                  "__pycache__", "Carthage", "target", "dist"]
         var out: [CleanTarget] = []
+
+        // 'target' (Rust) e 'dist' (JS) são nomes genéricos: só contam como
+        // artifact regenerável se o projeto tiver o marcador do ecossistema
+        // (Cargo.toml / package.json), pra nunca apagar pasta de dados do usuário.
+        func isBuildArtifact(_ url: URL) -> Bool {
+            let name = url.lastPathComponent
+            guard names.contains(name) else { return false }
+            let fm = FileManager.default
+            let projectDir = url.deletingLastPathComponent()
+            switch name {
+            case "target": return fm.fileExists(atPath: projectDir.appendingPathComponent("Cargo.toml").path)
+            case "dist": return fm.fileExists(atPath: projectDir.appendingPathComponent("package.json").path)
+            default: return true
+            }
+        }
 
         func recurse(_ dir: URL, depth: Int) {
             guard depth <= 3 else { return }
@@ -352,7 +409,7 @@ final class DiskScanner: ObservableObject {
             for item in items {
                 let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 guard isDir else { continue }
-                if names.contains(item.lastPathComponent) {
+                if isBuildArtifact(item) {
                     let b = size(of: item)
                     if b > minBytes {
                         let projectDir = item.deletingLastPathComponent()
@@ -505,8 +562,7 @@ final class DiskScanner: ObservableObject {
     /// dezenas de GB fácil).
     private func scanLibrary() -> [CleanTarget] {
         let specs: [(String, String, Tier, KeyPath<L, String>)] = [
-            // Xcode & Apple (DerivedData tem scanner próprio, por projeto)
-            ("Library/Developer/Xcode/iOS DeviceSupport", "iOS DeviceSupport", .caution, \.iosDeviceSupport),
+            // Xcode & Apple (DerivedData e DeviceSupport têm scanner próprio)
             ("Library/Developer/Xcode/Archives", "Xcode Archives", .caution, \.xcodeArchives),
             ("Library/Developer/XcodeBuildMCP/workspaces", "workspaces", .safe, \.xcodeBuildMCP),
             ("Library/Caches/org.swift.swiftpm", "org.swift.swiftpm", .safe, \.swiftpmCache),
@@ -525,6 +581,9 @@ final class DiskScanner: ObservableObject {
             (".m2/repository", "Maven", .caution, \.depsCache),
             (".cargo/registry", "Cargo", .caution, \.depsCache),
             (".pub-cache", "Flutter pub", .caution, \.depsCache),
+            // Android SDK / emulador
+            ("Library/Android/sdk/system-images", "Android system images", .caution, \.androidSdkImages),
+            (".android/avd", "Android AVDs", .caution, \.androidAvd),
             // Editores / IDEs
             ("Library/Application Support/Code/CachedData", "VS Code (CachedData)", .safe, \.editorCache),
             ("Library/Application Support/Code/Cache", "VS Code (Cache)", .safe, \.editorCache),
@@ -550,6 +609,267 @@ final class DiskScanner: ObservableObject {
             }
         }
         return out
+    }
+
+    /// Caches em ~/.cache (padrão XDG): uv, codex, puppeteer e afins vivem aqui,
+    /// não em ~/Library/Caches — por isso o scanLibrary os perdia. Tudo em
+    /// ~/.cache é, por definição, regenerável (tier seguro). Pula os que já têm
+    /// scanner próprio com tier caution (modelos de IA) pra não duplicar/rebaixar.
+    private func scanCacheHome() -> [CleanTarget] {
+        let cache = home.appendingPathComponent(".cache")
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: cache, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        ) else { return [] }
+        // Já cobertos com tier próprio (caution) no scanLibrary: não duplicar.
+        let handledElsewhere: Set<String> = ["huggingface", "lm-studio"]
+        var out: [CleanTarget] = []
+        for item in items {
+            let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            guard isDir, !handledElsewhere.contains(item.lastPathComponent) else { continue }
+            let b = size(of: item)
+            if b > minBytes {
+                out.append(CleanTarget(url: item, label: item.lastPathComponent,
+                                       detailKey: \.pkgCache, tier: .safe, bytes: b))
+            }
+        }
+        return out
+    }
+
+    /// Repo Git acidental na Home. Um `git init/add` errado em ~ passa a rastrear
+    /// a casa inteira e incha pra dezenas de GB. Quem versiona dotfiles usa repo
+    /// bare fora da home, então um ~/.git normal é quase sempre engano — mas
+    /// apagar repo às cegas é perigoso: tier .info (mostra, o app nunca apaga).
+    private func scanStrayGit() -> [CleanTarget] {
+        let dotgit = home.appendingPathComponent(".git")
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dotgit.path, isDirectory: &isDir),
+              isDir.boolValue else { return [] }
+        let b = size(of: dotgit)
+        guard b > minBytes else { return [] }
+        return [CleanTarget(url: dotgit, labelKey: \.strayGitLabel,
+                            detailKey: \.strayGitDetail, tier: .info, bytes: b)]
+    }
+
+    /// iOS DeviceSupport quebrado por versão. Você acumula vários builds quase
+    /// idênticos do mesmo iOS (23F77/81/84…): mantém o mais novo, oferece os
+    /// antigos (recriam ao reconectar um device). Com 1 versão, vira bloco único.
+    private func scanDeviceSupportVersions() -> [CleanTarget] {
+        let root = home.appendingPathComponent("Library/Developer/Xcode/iOS DeviceSupport")
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
+            options: [.skipsHiddenFiles]) else { return [] }
+        let versions = items.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        guard !versions.isEmpty else { return [] }
+        // Mais novo primeiro (por data de modificação).
+        let sorted = versions.sorted {
+            let a = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let b = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return a > b
+        }
+        // 1 versão: é a atual — bloco único (comportamento antigo). >1: descarta o topo.
+        let old = sorted.count == 1 ? sorted : Array(sorted.dropFirst())
+        var out: [CleanTarget] = []
+        for v in old {
+            let b = size(of: v)
+            if b > minBytes {
+                let detail: KeyPath<L, String> = sorted.count == 1 ? \.iosDeviceSupport : \.deviceSupportOld
+                out.append(CleanTarget(url: v, label: "iOS DeviceSupport · \(v.lastPathComponent)",
+                                       detailKey: detail, tier: .caution, bytes: b))
+            }
+        }
+        return out
+    }
+
+    /// Sobras de apps que você não tem mais instalados (ex.: installer do Docker
+    /// Desktop quando você usa OrbStack). Curado e conservador: só sinaliza se o
+    /// app dono claramente não existe. Tier caution (é dado de app).
+    private func scanOrphanedLeftovers() -> [CleanTarget] {
+        // (pasta de sobra, apps que provariam que ainda está em uso, detalhe)
+        let table: [(String, [String], KeyPath<L, String>)] = [
+            ("Library/Application Support/com.docker.install", ["/Applications/Docker.app"], \.orphanLeftover),
+        ]
+        let fm = FileManager.default
+        var out: [CleanTarget] = []
+        for (rel, ownerApps, detail) in table {
+            let url = home.appendingPathComponent(rel)
+            guard fm.fileExists(atPath: url.path) else { continue }
+            let stillUsed = ownerApps.contains { fm.fileExists(atPath: $0) }
+            guard !stillUsed else { continue }
+            let b = size(of: url)
+            if b > minBytes {
+                out.append(CleanTarget(url: url, label: url.lastPathComponent,
+                                       detailKey: detail, tier: .caution, bytes: b))
+            }
+        }
+        return out
+    }
+
+    /// Repos com .git inchado (pack gigante / binário no histórico) sob
+    /// ~/Development. Advisory (info): apagar .git perde história — sugere git gc.
+    private func scanGitBloat() -> [CleanTarget] {
+        let dev = home.appendingPathComponent("Development")
+        let threshold: Int64 = 1_000_000_000
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: dev, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        ) else { return [] }
+        var out: [CleanTarget] = []
+        for proj in items {
+            let isDir = (try? proj.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            guard isDir else { continue }
+            let objects = proj.appendingPathComponent(".git/objects")
+            guard FileManager.default.fileExists(atPath: objects.path) else { continue }
+            let b = size(of: objects)
+            if b >= threshold {
+                out.append(CleanTarget(url: proj.appendingPathComponent(".git"),
+                                       label: "\(proj.lastPathComponent)/.git",
+                                       detailKey: \.gitBloat, tier: .info, bytes: b))
+            }
+        }
+        return out
+    }
+
+    /// Maiores arquivos INDIVIDUAIS (não pastas) nas pastas de usuário — o culpado
+    /// costuma ser UM arquivo (um .mp4, um .dmg), não a pasta. Tier info: o app não
+    /// apaga arquivo pessoal, só revela no Finder.
+    private func scanBigFiles() -> [CleanTarget] {
+        let roots = ["Downloads", "Desktop", "Documents", "Movies"].map { home.appendingPathComponent($0) }
+        let threshold: Int64 = 300_000_000
+        let now = Date()
+        // (url, bytes, parado): "parado" = não modificado há 180+ dias. Grande +
+        // parado + insubstituível = candidato a mover pro SSD externo (a lente de
+        // offload). O app NUNCA move — só sinaliza e revela no Finder.
+        var files: [(URL, Int64, Bool)] = []
+        for root in roots {
+            guard let en = FileManager.default.enumerator(
+                at: root, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .isRegularFileKey, .contentModificationDateKey],
+                options: [.skipsHiddenFiles]) else { continue }
+            for case let f as URL in en {
+                let v = try? f.resourceValues(forKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey, .contentModificationDateKey])
+                guard v?.isRegularFile == true else { continue }
+                let b = Int64(v?.totalFileAllocatedSize ?? 0)
+                guard b >= threshold else { continue }
+                let stale = (v?.contentModificationDate).map { now.timeIntervalSince($0) > 180 * 86_400 } ?? false
+                files.append((f, b, stale))
+            }
+        }
+        return files.sorted { $0.1 > $1.1 }.prefix(15).map {
+            CleanTarget(url: $0.0, label: $0.0.lastPathComponent,
+                        detailKey: $0.2 ? \.offloadDetail : \.bigFileDetail, tier: .info, bytes: $0.1)
+        }
+    }
+
+    /// Bundle IDs dos apps instalados (lê CFBundleIdentifier dos .app). Base pra
+    /// achar dados órfãos: pasta nomeada por bundle-id cujo app não existe mais.
+    private func installedBundleIDs() -> Set<String> {
+        let fm = FileManager.default
+        let dirs = ["/Applications", "/Applications/Utilities", "/System/Applications",
+                    home.appendingPathComponent("Applications").path]
+        var ids = Set<String>()
+        for dir in dirs {
+            guard let apps = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+            for app in apps where app.hasSuffix(".app") {
+                if let d = NSDictionary(contentsOfFile: "\(dir)/\(app)/Contents/Info.plist"),
+                   let id = d["CFBundleIdentifier"] as? String {
+                    ids.insert(id.lowercased())
+                }
+            }
+        }
+        return ids
+    }
+
+    /// Dados de apps que você não tem mais instalados: pastas em Containers e
+    /// Application Support nomeadas por bundle-id (com.foo.bar) cujo app sumiu.
+    /// Conservador — só nomes reverse-DNS, pula com.apple.*, tier caution (Lixeira).
+    private func scanOrphanedAppData() -> [CleanTarget] {
+        let installed = installedBundleIDs()
+        let fm = FileManager.default
+        var out: [CleanTarget] = []
+        for rel in ["Library/Containers", "Library/Application Support"] {
+            let root = home.appendingPathComponent(rel)
+            guard let items = try? fm.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+            ) else { continue }
+            for item in items {
+                let name = item.lastPathComponent
+                // Só nomes que parecem bundle-id (2+ pontos). Nomes simples como
+                // "Google"/"Steam" não entram — evita falso-positivo de app vivo.
+                guard name.filter({ $0 == "." }).count >= 2,
+                      !name.lowercased().hasPrefix("com.apple."),
+                      !installed.contains(name.lowercased()) else { continue }
+                let b = size(of: item)
+                if b > minBytes {
+                    out.append(CleanTarget(url: item, label: name,
+                                           detailKey: \.orphanAppData, tier: .caution, bytes: b))
+                }
+            }
+        }
+        return out
+    }
+
+    /// Discos de máquinas virtuais (Parallels/VMware/UTM) — 20–100 GB fáceis, e
+    /// invisíveis pros cleaners comuns. Tier info: dado seu, revela no Finder.
+    private func scanVMDisks() -> [CleanTarget] {
+        let specs: [(String, String)] = [
+            ("Parallels", "Parallels VMs"),
+            ("Documents/Parallels", "Parallels VMs"),
+            ("Virtual Machines.localized", "VMware VMs"),
+            ("Library/Containers/com.utmapp.UTM/Data/Documents", "UTM VMs"),
+        ]
+        var out: [CleanTarget] = []
+        for (rel, label) in specs {
+            let url = home.appendingPathComponent(rel)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            let b = size(of: url)
+            if b > minBytes {
+                out.append(CleanTarget(url: url, label: label, detailKey: \.vmDisk, tier: .info, bytes: b))
+            }
+        }
+        return out
+    }
+
+    /// Lixeira: mover pra Lixeira não libera espaço até esvaziar. Surface com
+    /// botão dedicado (o app até explica isso) — fecha o ciclo do delete-to-trash.
+    private func scanTrash() -> [CleanTarget] {
+        let trash = home.appendingPathComponent(".Trash")
+        let b = size(of: trash)
+        guard b > minBytes else { return [] }
+        return [CleanTarget(url: trash, labelKey: \.trashLabel,
+                            detailKey: \.trashDetail, tier: .info, bytes: b)]
+    }
+
+    /// 🥇 Detecção de crescimento: compara a paisagem atual (por categoria) com o
+    /// snapshot mais antigo (≥1 dia) e avisa o que APARECEU grande ou CRESCEU — o
+    /// que enche o disco em silêncio. Grava o snapshot novo a cada passada.
+    private func growthAlerts(from found: [CleanTarget]) -> [CleanTarget] {
+        let now = Date().timeIntervalSince1970
+        var current: [String: Int64] = [:]
+        var repURL: [String: URL] = [:]
+        var repBytes: [String: Int64] = [:]
+        for t in found {
+            current[t.category, default: 0] += t.bytes
+            if t.bytes > (repBytes[t.category] ?? 0) { repBytes[t.category] = t.bytes; repURL[t.category] = t.url }
+        }
+        defer { SizeLog.record(current, now: now) }
+        guard let base = SizeLog.baseline(now: now, minAgeDays: 1) else { return [] }
+        let days = max(1, Int((now - base.ts) / 86_400))
+        let newBig: Int64 = 3_000_000_000, grew: Int64 = 3_000_000_000
+        var out: [CleanTarget] = []
+        for (cat, cur) in current where cur >= minBytes {
+            let label: String?
+            if base.cats[cat] == nil {
+                label = cur >= newBig ? L10n.growthNew(name: cat, size: fmt(cur)) : nil
+            } else if let p = base.cats[cat], cur - p >= grew {
+                label = L10n.growthGrew(name: cat, size: fmt(cur - p), days: days)
+            } else {
+                label = nil
+            }
+            if let label = label {
+                out.append(CleanTarget(url: repURL[cat] ?? home, label: label,
+                                       detailKey: \.growthDetail, tier: .info,
+                                       bytes: base.cats[cat].map { cur - $0 } ?? cur))
+            }
+        }
+        return out.sorted { $0.bytes > $1.bytes }
     }
 
     /// Tier informativo (só leitura): pastas grandes que o app NÃO apaga, mas
@@ -584,7 +904,8 @@ final class DiskScanner: ObservableObject {
             let purgeable = important - free
             if purgeable > minBytes {
                 out.append(CleanTarget(url: home, labelKey: \.purgeableLabel,
-                                       detailKey: \.purgeableDetail, tier: .info, bytes: purgeable))
+                                       detailKey: \.purgeableDetail, tier: .info, bytes: purgeable,
+                                       canThinSnapshots: hasLocalSnapshots()))
             }
         }
         return out
@@ -787,6 +1108,106 @@ final class DiskScanner: ObservableObject {
         return devices.values.reduce(0) { $0 + $1.count }
     }
 
+    /// Apaga runtimes de simulador (imagens de disco de iOS/etc) não usados há 30+
+    /// dias via `simctl runtime delete --notUsedSinceDays 30`. Seguro: nunca toca
+    /// no runtime em uso. Conta antes com `--dry-run` pra dar feedback honesto.
+    func deleteUnusedRuntimes() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // Conta com dry-run só pro feedback; o delete real roda sempre (é
+            // seguro — só apaga runtime parado 30+ dias) pra um parse falho do
+            // dry-run nunca bloquear a limpeza. O rescan reflete o que sobrou.
+            let n = self?.unusedRuntimeCount() ?? 0
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+            p.arguments = ["simctl", "runtime", "delete", "--notUsedSinceDays", "30"]
+            p.standardOutput = Pipe()
+            p.standardError = Pipe()
+            try? p.run()
+            p.waitUntilExit()
+            DispatchQueue.main.async {
+                self?.runtimeDeleteDone = n
+                self?.scan()
+            }
+        }
+    }
+
+    /// Quantos runtimes o `--notUsedSinceDays 30` apagaria (via `--dry-run`).
+    private func unusedRuntimeCount() -> Int {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = ["simctl", "runtime", "delete", "--notUsedSinceDays", "30", "--dry-run"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return 0 }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        // O dry-run lista uma imagem por linha; conta linhas com um UUID/identificador.
+        return text.split(separator: "\n").filter { $0.contains("—") || $0.contains(" (") || $0.contains("iOS") || $0.contains("watchOS") || $0.contains("tvOS") }.count
+    }
+
+    /// Esvazia a Lixeira de verdade — mover pra Lixeira só libera espaço aqui.
+    /// Best-effort: mede antes e remove o conteúdo (ignora itens travados/em uso).
+    func emptyTrash() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let trash = self.home.appendingPathComponent(".Trash")
+            let freed = self.size(of: trash)
+            let fm = FileManager.default
+            if let items = try? fm.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil, options: []) {
+                for item in items { try? fm.removeItem(at: item) }
+            }
+            DispatchQueue.main.async {
+                self.trashEmptiedBytes = freed
+                self.scan()
+            }
+        }
+    }
+
+    /// Há snapshots locais do Time Machine? (o grosso do purgeable). Sem admin.
+    private func hasLocalSnapshots() -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/tmutil")
+        p.arguments = ["listlocalsnapshots", "/"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return false }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (String(data: data, encoding: .utf8) ?? "").contains("com.apple.TimeMachine")
+    }
+
+    /// Espaço purgeável agora (capacidade "importante" − livre real).
+    private func purgeableBytes() -> Int64 {
+        let volume = URL(fileURLWithPath: NSHomeDirectory())
+        guard let important = (try? volume.resourceValues(
+            forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+        else { return 0 }
+        let (free, _) = diskSpace()
+        return max(0, Int64(important) - free)
+    }
+
+    /// Recupera o espaço preso pelos snapshots locais do TM, do mais antigo pro
+    /// mais novo (`tmutil thinlocalsnapshots`, urgência 4). Precisa de admin — o
+    /// osascript mostra o prompt nativo do macOS (o app não é sandboxed). O
+    /// backup no HD externo do TM NÃO é tocado; só some o histórico local.
+    func thinLocalSnapshots() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let bytes = max(self?.purgeableBytes() ?? 0, 1_000_000_000)
+            let script = "do shell script \"/usr/bin/tmutil thinlocalsnapshots / \(bytes) 4\" with administrator privileges"
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            p.arguments = ["-e", script]
+            p.standardOutput = Pipe()
+            p.standardError = Pipe()
+            try? p.run()
+            p.waitUntilExit()
+            DispatchQueue.main.async { self?.scan() }
+        }
+    }
+
     // MARK: notificação de disco baixo
 
     private var notifyEnabled: Bool {
@@ -815,17 +1236,21 @@ final class DiskScanner: ObservableObject {
 // MARK: - UI
 
 /// Painel ativo do popover/janela: limpeza de disco, duplicatas ou histórico.
-enum Pane { case cleaner, duplicates, stats }
+enum Pane { case cleaner, duplicates, uninstall, stats }
 
 struct ContentView: View {
     @ObservedObject var scanner: DiskScanner
     @ObservedObject var updater: Updater
     @ObservedObject var duplicates: DuplicateScanner
+    @ObservedObject var uninstaller: AppUninstaller
     @Environment(\.openWindow) private var openWindow
     @State private var pane: Pane = .cleaner
     @State private var selection = Set<UUID>()
     @State private var confirming = false
     @State private var confirmingSimDelete = false
+    @State private var confirmingRuntimeDelete = false
+    @State private var confirmingEmptyTrash = false
+    @State private var confirmingThinSnapshots = false
     @State private var launchAtLogin = false
     @State private var showSupport = false
     @State private var pixCopied = false
@@ -915,6 +1340,7 @@ struct ContentView: View {
                 Picker("", selection: $pane) {
                     Text(L10n.paneCleaner).tag(Pane.cleaner)
                     Text(L10n.paneDuplicates).tag(Pane.duplicates)
+                    Text(L10n.paneUninstall).tag(Pane.uninstall)
                     Text(L10n.paneStats).tag(Pane.stats)
                 }
                 .pickerStyle(.segmented).labelsHidden()
@@ -927,6 +1353,8 @@ struct ContentView: View {
                     footer
                 } else if pane == .duplicates {
                     DuplicatesView(scanner: duplicates)
+                } else if pane == .uninstall {
+                    UninstallView(scanner: uninstaller)
                 } else {
                     StatsView()
                 }
@@ -1203,8 +1631,8 @@ struct ContentView: View {
 
                 // O total em dinheiro (preço de SSD da Apple): pico de
                 // gratidão é o melhor momento pro pedido de café logo abaixo.
-                if Double(totalFreedBytes) * CleanStats.usdPerByte >= 1 {
-                    Text(L10n.recapMoneyShort(fmtUSD(Double(totalFreedBytes) * CleanStats.usdPerByte)))
+                if Double(totalFreedBytes) * SSDPricing.perByte >= 1 {
+                    Text(L10n.recapMoneyShort(fmtMoney(Double(totalFreedBytes) * SSDPricing.perByte)))
                         .font(.caption.bold()).foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
                 }
@@ -1570,6 +1998,65 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(confirmingSimDelete ? .red : .blue)
                     }
+
+                    // Runtimes de simulador não usados (imagens de iOS) — 2 cliques.
+                    if t.url.path.hasSuffix("Developer/CoreSimulator") {
+                        Button {
+                            if confirmingRuntimeDelete {
+                                confirmingRuntimeDelete = false
+                                Analytics.infoAction("deleteUnusedRuntimes")
+                                scanner.deleteUnusedRuntimes()
+                            } else {
+                                scanner.runtimeDeleteDone = nil
+                                confirmingRuntimeDelete = true
+                            }
+                        } label: {
+                            Label(confirmingRuntimeDelete ? L10n.deleteRuntimesConfirm : L10n.deleteRuntimes,
+                                  systemImage: confirmingRuntimeDelete ? "exclamationmark.triangle.fill" : "cpu")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(confirmingRuntimeDelete ? .red : .blue)
+                    }
+
+                    // Recuperar espaço preso por snapshots locais do TM — 2 cliques.
+                    if t.canThinSnapshots {
+                        Button {
+                            if confirmingThinSnapshots {
+                                confirmingThinSnapshots = false
+                                Analytics.infoAction("thinSnapshots")
+                                scanner.thinLocalSnapshots()
+                            } else {
+                                confirmingThinSnapshots = true
+                            }
+                        } label: {
+                            Label(confirmingThinSnapshots ? L10n.thinSnapshotsConfirm : L10n.thinSnapshots,
+                                  systemImage: confirmingThinSnapshots ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(confirmingThinSnapshots ? .red : .blue)
+                    }
+
+                    // Esvaziar a Lixeira de verdade — 2 cliques (irreversível).
+                    if t.url.lastPathComponent == ".Trash" {
+                        Button {
+                            if confirmingEmptyTrash {
+                                confirmingEmptyTrash = false
+                                Analytics.infoAction("emptyTrash")
+                                scanner.emptyTrash()
+                            } else {
+                                scanner.trashEmptiedBytes = nil
+                                confirmingEmptyTrash = true
+                            }
+                        } label: {
+                            Label(confirmingEmptyTrash ? L10n.emptyTrashConfirm : L10n.emptyTrash,
+                                  systemImage: confirmingEmptyTrash ? "exclamationmark.triangle.fill" : "trash")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(confirmingEmptyTrash ? .red : .blue)
+                    }
                 }
                 .padding(.top, 2)
                 // Feedback do simctl: sem isso, quando não há indisponível o
@@ -1578,6 +2065,18 @@ struct ContentView: View {
                     Text(n > 0 ? L10n.simDeleted(n) : L10n.simNoneToDelete)
                         .font(.caption)
                         .foregroundStyle(n > 0 ? .green : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if t.url.path.hasSuffix("Developer/CoreSimulator"), let n = scanner.runtimeDeleteDone {
+                    Text(n > 0 ? L10n.runtimesDeleted(n) : L10n.runtimesNoneToDelete)
+                        .font(.caption)
+                        .foregroundStyle(n > 0 ? .green : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if t.url.lastPathComponent == ".Trash", let freed = scanner.trashEmptiedBytes {
+                    Text(L10n.trashEmptied(fmt(freed)))
+                        .font(.caption)
+                        .foregroundStyle(freed > 0 ? .green : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1826,13 +2325,24 @@ struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(systemName: lowSpace ? "internaldrive.fill" : "internaldrive")
-            .onAppear { openIfPending() }
-            .onChange(of: requester.pending) { _, _ in openIfPending() }
+        HStack(spacing: 3) {
+            Image(systemName: warn ? "internaldrive.fill" : "internaldrive")
+            if let pct = freePct { Text("\(pct)%").monospacedDigit() }
+        }
+        .onAppear { openIfPending(); scanner.refreshDiskSpace() }
+        .onChange(of: requester.pending) { _, _ in openIfPending() }
     }
 
-    private var lowSpace: Bool {
-        scanner.totalBytes > 0 && Double(scanner.freeBytes) / Double(scanner.totalBytes) < 0.1
+    /// % de espaço livre pro label (nil antes da 1ª medição).
+    private var freePct: Int? {
+        guard scanner.totalBytes > 0 else { return nil }
+        return Int((Double(scanner.freeBytes) / Double(scanner.totalBytes) * 100).rounded())
+    }
+
+    /// Vigia em alerta: disco baixo OU há crescimento suspeito detectado.
+    private var warn: Bool {
+        (scanner.totalBytes > 0 && Double(scanner.freeBytes) / Double(scanner.totalBytes) < 0.1)
+            || scanner.growthCount > 0
     }
 
     private func openIfPending() {
@@ -1864,17 +2374,18 @@ struct HarboflyApp: App {
     // Compartilhado entre as duas cenas: preserva o resultado do scan de
     // duplicatas ao alternar barra de menu ↔ janela.
     @StateObject private var duplicates = DuplicateScanner()
+    @StateObject private var uninstaller = AppUninstaller()
 
     var body: some Scene {
         MenuBarExtra {
-            ContentView(scanner: scanner, updater: updater, duplicates: duplicates)
+            ContentView(scanner: scanner, updater: updater, duplicates: duplicates, uninstaller: uninstaller)
         } label: {
             MenuBarLabel(scanner: scanner)
         }
         .menuBarExtraStyle(.window)
 
         Window(AppInfo.name, id: AppInfo.mainWindowID) {
-            ContentView(scanner: scanner, updater: updater, duplicates: duplicates)
+            ContentView(scanner: scanner, updater: updater, duplicates: duplicates, uninstaller: uninstaller)
                 .fixedSize()
         }
         .windowResizability(.contentSize)

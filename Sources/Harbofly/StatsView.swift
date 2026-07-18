@@ -90,13 +90,13 @@ struct StatsView: View {
             .padding(.top, 6)
 
             // O "uau": o total traduzido no preço de SSD da Apple.
-            if stats.savedUSD >= 1 {
+            if stats.savedMoney >= 1 {
                 VStack(spacing: 3) {
-                    Text(L10n.moneyLine(fmtUSD(stats.savedUSD)))
+                    Text(L10n.moneyLine(fmtMoney(stats.savedMoney)))
                         .font(.headline)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(L10n.moneyFootnote)
+                    Text(L10n.moneyFootnote(fmtMoney(SSDPricing.current.price)))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -183,8 +183,8 @@ struct StatsView: View {
             draw("Harbofly Recap", .monospacedSystemFont(ofSize: 30, weight: .regular), ShareCard.muted, 605)
             draw(L10n.shareCardVerb, .systemFont(ofSize: 46, weight: .medium), ShareCard.muted, 505)
             draw(fmt(stats.totalBytes), .systemFont(ofSize: 145, weight: .heavy), ShareCard.teal, 390)
-            if stats.savedUSD >= 1 {
-                draw(L10n.recapMoneyShort(fmtUSD(stats.savedUSD)),
+            if stats.savedMoney >= 1 {
+                draw(L10n.recapMoneyShort(fmtMoney(stats.savedMoney)),
                      .systemFont(ofSize: 52, weight: .semibold), ShareCard.gold, 250)
             }
             if stats.cleanCount > 0 {
@@ -194,8 +194,8 @@ struct StatsView: View {
             }
             draw("harbofly.app", .monospacedSystemFont(ofSize: 34, weight: .regular), ShareCard.muted, 80)
         }
-        let text = stats.savedUSD >= 1
-            ? L10n.recapShareText(size: fmt(stats.totalBytes), usd: fmtUSD(stats.savedUSD))
+        let text = stats.savedMoney >= 1
+            ? L10n.recapShareText(size: fmt(stats.totalBytes), usd: fmtMoney(stats.savedMoney))
             : L10n.shareText(fmt(stats.totalBytes))
         showSharePicker([image, text])
     }
