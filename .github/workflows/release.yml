@@ -45,6 +45,21 @@ jobs:
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
         run: echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/asc.p8"
 
+      - name: Injetar GA4Config (analytics — secrets)
+        env:
+          GA4_MEASUREMENT_ID: ${{ secrets.GA4_MEASUREMENT_ID }}
+          GA4_API_SECRET: ${{ secrets.GA4_API_SECRET }}
+        run: |
+          # GA4Config.swift é gitignored (guarda o api_secret), então não vem no
+          # checkout. Recria a partir dos secrets pra o build ter as chaves.
+          cat > Sources/Harbofly/GA4Config.swift <<EOF
+          import Foundation
+          enum GA4Config {
+              static let measurementID = "${GA4_MEASUREMENT_ID}"
+              static let apiSecret = "${GA4_API_SECRET}"
+          }
+          EOF
+
       - name: Build + assinar + notarizar + .dmg
         env:
           SIGN_ID: ${{ secrets.SIGN_ID }}
