@@ -1,22 +1,44 @@
 import Foundation
-import TelemetryDeck
 
-/// Analytics anônimo e **opt-in** via TelemetryDeck.
+/// Analytics anônimo e **opt-in** via GA4 Measurement Protocol.
+///
+/// Sem SDK: cada evento é um POST HTTPS pro Google Analytics feito pelo próprio
+/// app (você lê exatamente o que sai, aqui no source). Sem conta, sem login,
+/// sem IDFA. O identificador é um `client_id` aleatório gerado e guardado
+/// localmente — não liga a nenhuma pessoa.
 ///
 /// Filosofia Apple — o que NUNCA sai do app:
 /// e-mail, IP, nome, hostname, caminhos, nem nomes de projeto.
 /// Só nomes de evento, categorias genéricas de cache (DerivedData,
 /// node_modules, Homebrew…) e métricas numéricas agregáveis.
 ///
-/// Opt-in de verdade: o SDK só é inicializado depois que o usuário aceita.
-/// Sem consentimento, `TelemetryDeck.initialize` nunca roda e nenhum sinal
-/// deixa a máquina. País, idioma e versão do macOS são preenchidos pelo
-/// próprio SDK; retenção (1/7/30 dias) o TelemetryDeck calcula no servidor.
+/// Opt-in de verdade: sem consentimento, `start()` nunca roda e nenhum request
+/// deixa a máquina. País (via IP, no ingest do GA4), versão e retenção o GA4
+/// calcula do lado dele. Enquanto o `GA4Config` estiver com placeholder, tudo
+/// fica inerte.
 enum Analytics {
-    /// App ID da conta em telemetrydeck.com.
-    private static let appID = "3965E9D8-5C35-4F46-B693-1EEEAE69BE41"
-
     private static var started = false
+
+    // Identidade anônima e sessão (exigências do Measurement Protocol).
+    private static let clientKey = "hf.analytics.clientID"
+    private static var clientID: String = {
+        let d = UserDefaults.standard
+        if let existing = d.string(forKey: clientKey) { return existing }
+        let id = UUID().uuidString
+        d.set(id, forKey: clientKey)
+        return id
+    }()
+    private static var sessionID = "0"
+
+    /// Só envia quando o GA4Config foi preenchido com valores reais.
+    private static var configured: Bool {
+        !GA4Config.measurementID.isEmpty && !GA4Config.measurementID.contains("XXXX")
+            && !GA4Config.apiSecret.isEmpty && !GA4Config.apiSecret.contains("REPLACE")
+    }
+    private static var endpoint: URL? {
+        guard configured else { return nil }
+        return URL(string: "https://www.google-analytics.com/mp/collect?measurement_id=\(GA4Config.measurementID)&api_secret=\(GA4Config.apiSecret)")
+    }
 
     // MARK: consentimento
 
@@ -29,7 +51,7 @@ enum Analytics {
         UserDefaults.standard.bool(forKey: Prefs.analyticsEnabled)
     }
 
-    /// Chamado no launch: se o usuário já consentiu, sobe o SDK.
+    /// Chamado no launch: se o usuário já consentiu, sobe o envio.
     static func bootstrapIfConsented() {
         guard enabled else { return }
         start()
@@ -43,7 +65,7 @@ enum Analytics {
         start()
     }
 
-    /// Usuário recusou (dialog) ou desligou o toggle. O SDK fica inerte.
+    /// Usuário recusou (dialog) ou desligou o toggle. Nada é enviado.
     static func optOut() {
         let d = UserDefaults.standard
         d.set(true, forKey: Prefs.analyticsChoiceMade)
@@ -52,16 +74,17 @@ enum Analytics {
 
     private static func start() {
         guard !started else { return }
-        let config = TelemetryDeck.Config(appID: appID)
-        TelemetryDeck.initialize(config: config)
         started = true
+        sessionID = String(Int(Date().timeIntervalSince1970))
+        guard configured else { return }
+        _ = clientID   // materializa/persiste o id anônimo
 
         // Aquisição: primeiro launch de todos, uma vez na vida do app.
         if !UserDefaults.standard.bool(forKey: Prefs.firstLaunchSent) {
             UserDefaults.standard.set(true, forKey: Prefs.firstLaunchSent)
-            signal("App.firstLaunch")
+            signal("app_first_launch")
         }
-        signal("App.launched")
+        signal("app_launched")
     }
 
     // MARK: eventos
@@ -77,17 +100,17 @@ enum Analytics {
     static func scanFinished(durationMs: Int, itemCount: Int, recoverableBytes: Int64,
                              freeRatio: Double, byCategory: [String: Int64]) {
         guard enabled else { return }
-        if !UserDefaults.standard.bool(forKey: Prefs.firstScanSent) {
+        if configured, !UserDefaults.standard.bool(forKey: Prefs.firstScanSent) {
             UserDefaults.standard.set(true, forKey: Prefs.firstScanSent)
-            signal("Scan.first")
+            signal("scan_first")
         }
-        signal("Scan.finished",
-               parameters: ["itemCount": String(itemCount), "durationMs": String(durationMs),
-                            "freePct": String(Int((freeRatio * 100).rounded()))],
+        signal("scan_finished",
+               parameters: ["item_count": String(itemCount), "duration_ms": String(durationMs),
+                            "free_pct": String(Int((freeRatio * 100).rounded()))],
                floatValue: gb(recoverableBytes))
         // Composição: presença + peso de cada categoria genérica no scan.
         for (category, bytes) in byCategory {
-            signal("Cache.present", parameters: ["category": category], floatValue: gb(bytes))
+            signal("cache_present", parameters: ["category": category], floatValue: gb(bytes))
         }
     }
 
@@ -95,49 +118,49 @@ enum Analytics {
     private static var featuresSeen = Set<String>()
     static func featureUsed(_ name: String) {
         guard enabled, started, featuresSeen.insert(name).inserted else { return }
-        signal("Feature.used", parameters: ["name": name])
+        signal("feature_used", parameters: ["name": name])
     }
 
     /// Loop viral: compartilhou o card de conquista ou o recap do histórico.
     static func shared(_ kind: String) {
         guard enabled else { return }
-        signal("Share.tapped", parameters: ["kind": kind])
+        signal("share_tapped", parameters: ["kind": kind])
     }
 
     static func feedbackOpened() {
         guard enabled else { return }
-        signal("Feedback.opened")
+        signal("feedback_opened")
     }
     static func feedbackSent(type: String) {
         guard enabled else { return }
-        signal("Feedback.sent", parameters: ["type": type])
+        signal("feedback_sent", parameters: ["type": type])
     }
 
     // MARK: auto-clean (item 2)
     /// Usuário mudou a config do auto-clean (ligar/desligar, gatilho, escopo).
     static func autoCleanConfigured(enabled on: Bool, trigger: String, scope: String) {
         guard enabled else { return }
-        signal("AutoClean.configured",
+        signal("autoclean_configured",
                parameters: ["enabled": on ? "true" : "false", "trigger": trigger, "scope": scope])
     }
     /// O auto-clean disparou de verdade — quanto entregou e em que contexto.
     static func autoCleanRan(trigger: String, scope: String, freedBytes: Int64, itemCount: Int) {
         guard enabled else { return }
-        signal("AutoClean.ran",
-               parameters: ["trigger": trigger, "scope": scope, "itemCount": String(itemCount)],
+        signal("autoclean_ran",
+               parameters: ["trigger": trigger, "scope": scope, "item_count": String(itemCount)],
                floatValue: gb(freedBytes))
     }
 
     // MARK: duplicatas (item 3)
     static func duplicatesScanned(groups: Int, reclaimableBytes: Int64, durationMs: Int) {
         guard enabled else { return }
-        signal("Duplicates.scanned",
-               parameters: ["groups": String(groups), "durationMs": String(durationMs)],
+        signal("duplicates_scanned",
+               parameters: ["groups": String(groups), "duration_ms": String(durationMs)],
                floatValue: gb(reclaimableBytes))
     }
     static func duplicatesDeleted(mode: String, freedBytes: Int64, count: Int) {
         guard enabled else { return }
-        signal("Duplicates.deleted",
+        signal("duplicates_deleted",
                parameters: ["mode": mode, "count": String(count)],
                floatValue: gb(freedBytes))
     }
@@ -145,7 +168,7 @@ enum Analytics {
     /// Falhas (item 6): "delete" | "dockerPrune" | "feedback" | "duplicates".
     static func failure(_ category: String) {
         guard enabled else { return }
-        signal("Failure", parameters: ["category": category])
+        signal("failure", parameters: ["category": category])
     }
 
     // MARK: TIER 1 — descoberta de features
@@ -156,7 +179,7 @@ enum Analytics {
     static func ecosystems(_ list: [String]) {
         guard enabled, started, !ecosystemsSent, !list.isEmpty else { return }
         ecosystemsSent = true
-        signal("App.ecosystems", parameters: ["list": list.sorted().joined(separator: ",")])
+        signal("app_ecosystems", parameters: ["list": list.sorted().joined(separator: ",")])
     }
 
     /// Caches grandes que o app NÃO reconhece — só contagem + total, SEM nomes,
@@ -164,15 +187,15 @@ enum Analytics {
     /// alvo novo a ganhar; a versão nomeada exigiria uma allowlist curada.
     static func cacheUnrecognized(count: Int, totalBytes: Int64) {
         guard enabled, count > 0 else { return }
-        signal("Cache.unrecognized", parameters: ["count": String(count)], floatValue: gb(totalBytes))
+        signal("cache_unrecognized", parameters: ["count": String(count)], floatValue: gb(totalBytes))
     }
 
     /// Funil de decisão: categorias que o user SELECIONOU ao abrir o diálogo
-    /// (cruzado com Delete.confirmed dá o abandono por categoria).
+    /// (cruzado com delete_confirmed dá o abandono por categoria).
     static func deleteSelected(byCategory: [String: Int64]) {
         guard enabled else { return }
         for (category, bytes) in byCategory {
-            signal("Delete.selected", parameters: ["category": category], floatValue: gb(bytes))
+            signal("delete_selected", parameters: ["category": category], floatValue: gb(bytes))
         }
     }
 
@@ -181,14 +204,14 @@ enum Analytics {
     /// Funil da oferta proativa: "shown" | "accepted" | "snoozed".
     static func offer(_ action: String) {
         guard enabled else { return }
-        signal("Offer.\(action)")
+        signal("offer_\(action)")
     }
 
     /// Estado do Docker no scan: "running" | "off" (engine desligado, valor
     /// perdido) | "absent". Alimenta um possível nudge "ligue o Docker".
     static func dockerState(_ state: String) {
         guard enabled else { return }
-        signal("Docker.state", parameters: ["state": state])
+        signal("docker_state", parameters: ["state": state])
     }
 
     // MARK: TIER 3 — fricção e ações do tier informativo
@@ -196,40 +219,43 @@ enum Analytics {
     /// Ações no tier 🔵 informativo: "revealInFinder" | "deleteOldSims".
     static func infoAction(_ name: String) {
         guard enabled else { return }
-        signal("Info.\(name)")
+        signal("info_action", parameters: ["action": name])
     }
 
-    // MARK: capacidade — tempo em cada aba (duration signals do SDK)
+    // MARK: capacidade — tempo em cada aba (cronometrado localmente)
 
     private static var currentPane: String?
-    /// Fecha a duração da aba anterior e abre a da nova. Emite `Pane.duration`
-    /// com o nome da aba que foi deixada e quanto tempo ficou nela.
+    private static var paneStart: Date?
+    /// Fecha a duração da aba anterior e abre a da nova. Emite `pane_duration`
+    /// com o nome da aba que foi deixada e quantos segundos ficou nela.
     @MainActor
     static func paneSwitched(to name: String) {
         guard enabled, started else { return }
-        if currentPane != nil {
-            TelemetryDeck.stopAndSendDurationSignal("Pane.duration")
+        let now = Date()
+        if let prev = currentPane, let opened = paneStart {
+            let seconds = Int(now.timeIntervalSince(opened).rounded())
+            signal("pane_duration", parameters: ["name": prev, "seconds": String(seconds)])
         }
         currentPane = name
-        TelemetryDeck.startDurationSignal("Pane.duration", parameters: ["name": name])
+        paneStart = now
     }
 
     /// Conversão: usuário abriu o diálogo de exclusão.
     static func deleteClicked(mode: String, itemCount: Int) {
         guard enabled else { return }
-        signal("Delete.clicked",
-               parameters: ["mode": mode, "itemCount": String(itemCount)])
+        signal("delete_clicked",
+               parameters: ["mode": mode, "item_count": String(itemCount)])
     }
 
     /// Conversão: exclusão concluída. `byCategory` = bytes liberados por tipo
     /// genérico de cache (nunca o caminho/nome de projeto real).
     static func deleteConfirmed(mode: String, freedBytes: Int64, itemCount: Int, byCategory: [String: Int64]) {
         guard enabled else { return }
-        signal("Delete.confirmed",
-               parameters: ["mode": mode, "itemCount": String(itemCount)],
+        signal("delete_confirmed",
+               parameters: ["mode": mode, "item_count": String(itemCount)],
                floatValue: gb(freedBytes))
         for (category, bytes) in byCategory {
-            signal("Cache.cleaned", parameters: ["category": category], floatValue: gb(bytes))
+            signal("cache_cleaned", parameters: ["category": category], floatValue: gb(bytes))
         }
     }
 
@@ -237,8 +263,29 @@ enum Analytics {
 
     private static func gb(_ bytes: Int64) -> Double { Double(bytes) / 1_073_741_824 }
 
+    /// Ponto único de saída: monta o payload do Measurement Protocol e faz um
+    /// POST fire-and-forget (não bloqueia, falha em silêncio se estiver offline).
+    /// `session_id` + `engagement_time_msec` são exigidos pelo GA4 pra o evento
+    /// contar como engajamento e aparecer nos relatórios. `floatValue` (GB) vai
+    /// como o param numérico `gb`.
     private static func signal(_ name: String, parameters: [String: String] = [:], floatValue: Double? = nil) {
-        guard started else { return }
-        TelemetryDeck.signal(name, parameters: parameters, floatValue: floatValue)
+        guard started, configured, let url = endpoint else { return }
+        var params: [String: Any] = parameters
+        params["session_id"] = sessionID
+        params["engagement_time_msec"] = 100
+        if let floatValue { params["gb"] = floatValue }
+
+        let body: [String: Any] = [
+            "client_id": clientID,
+            "non_personalized_ads": true,
+            "events": [["name": name, "params": params]],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = data
+        URLSession.shared.dataTask(with: req).resume()
     }
 }

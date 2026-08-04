@@ -10,3 +10,6 @@ Package.resolved
 
 # macOS
 .DS_Store
+
+# Segredos locais do GA4 (Measurement Protocol) — nunca versionar o api_secret
+Sources/Harbofly/GA4Config.swift

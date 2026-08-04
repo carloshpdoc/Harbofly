@@ -1,0 +1,9 @@
+import Foundation
+
+// TEMPLATE (este vai pro git). Copie para `GA4Config.swift` (que é gitignored)
+// e preencha com os valores reais do data stream do GA4. Sem valores reais,
+// o Analytics fica inerte e nada é enviado.
+enum GA4Config {
+    static let measurementID = "G-XXXXXXXXXX"
+    static let apiSecret = "REPLACE_ME"
+}
