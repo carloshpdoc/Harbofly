@@ -105,8 +105,8 @@ enum Analytics {
             signal("scan_first")
         }
         signal("scan_finished",
-               parameters: ["item_count": String(itemCount), "duration_ms": String(durationMs),
-                            "free_pct": String(Int((freeRatio * 100).rounded()))],
+               metrics: ["item_count": Double(itemCount), "duration_ms": Double(durationMs),
+                         "free_pct": (freeRatio * 100).rounded()],
                floatValue: gb(recoverableBytes))
         // Composição: presença + peso de cada categoria genérica no scan.
         for (category, bytes) in byCategory {
@@ -147,7 +147,8 @@ enum Analytics {
     static func autoCleanRan(trigger: String, scope: String, freedBytes: Int64, itemCount: Int) {
         guard enabled else { return }
         signal("autoclean_ran",
-               parameters: ["trigger": trigger, "scope": scope, "item_count": String(itemCount)],
+               parameters: ["trigger": trigger, "scope": scope],
+               metrics: ["item_count": Double(itemCount)],
                floatValue: gb(freedBytes))
     }
 
@@ -155,13 +156,14 @@ enum Analytics {
     static func duplicatesScanned(groups: Int, reclaimableBytes: Int64, durationMs: Int) {
         guard enabled else { return }
         signal("duplicates_scanned",
-               parameters: ["groups": String(groups), "duration_ms": String(durationMs)],
+               metrics: ["groups": Double(groups), "duration_ms": Double(durationMs)],
                floatValue: gb(reclaimableBytes))
     }
     static func duplicatesDeleted(mode: String, freedBytes: Int64, count: Int) {
         guard enabled else { return }
         signal("duplicates_deleted",
-               parameters: ["mode": mode, "count": String(count)],
+               parameters: ["mode": mode],
+               metrics: ["count": Double(count)],
                floatValue: gb(freedBytes))
     }
 
@@ -187,7 +189,7 @@ enum Analytics {
     /// alvo novo a ganhar; a versão nomeada exigiria uma allowlist curada.
     static func cacheUnrecognized(count: Int, totalBytes: Int64) {
         guard enabled, count > 0 else { return }
-        signal("cache_unrecognized", parameters: ["count": String(count)], floatValue: gb(totalBytes))
+        signal("cache_unrecognized", metrics: ["count": Double(count)], floatValue: gb(totalBytes))
     }
 
     /// Funil de decisão: categorias que o user SELECIONOU ao abrir o diálogo
@@ -234,7 +236,7 @@ enum Analytics {
         let now = Date()
         if let prev = currentPane, let opened = paneStart {
             let seconds = Int(now.timeIntervalSince(opened).rounded())
-            signal("pane_duration", parameters: ["name": prev, "seconds": String(seconds)])
+            signal("pane_duration", parameters: ["name": prev], metrics: ["seconds": Double(seconds)])
         }
         currentPane = name
         paneStart = now
@@ -244,7 +246,8 @@ enum Analytics {
     static func deleteClicked(mode: String, itemCount: Int) {
         guard enabled else { return }
         signal("delete_clicked",
-               parameters: ["mode": mode, "item_count": String(itemCount)])
+               parameters: ["mode": mode],
+               metrics: ["item_count": Double(itemCount)])
     }
 
     /// Conversão: exclusão concluída. `byCategory` = bytes liberados por tipo
@@ -252,7 +255,8 @@ enum Analytics {
     static func deleteConfirmed(mode: String, freedBytes: Int64, itemCount: Int, byCategory: [String: Int64]) {
         guard enabled else { return }
         signal("delete_confirmed",
-               parameters: ["mode": mode, "item_count": String(itemCount)],
+               parameters: ["mode": mode],
+               metrics: ["item_count": Double(itemCount)],
                floatValue: gb(freedBytes))
         for (category, bytes) in byCategory {
             signal("cache_cleaned", parameters: ["category": category], floatValue: gb(bytes))
@@ -268,9 +272,12 @@ enum Analytics {
     /// `session_id` + `engagement_time_msec` são exigidos pelo GA4 pra o evento
     /// contar como engajamento e aparecer nos relatórios. `floatValue` (GB) vai
     /// como o param numérico `gb`.
-    private static func signal(_ name: String, parameters: [String: String] = [:], floatValue: Double? = nil) {
+    private static func signal(_ name: String, parameters: [String: String] = [:],
+                               metrics: [String: Double] = [:], floatValue: Double? = nil) {
         guard started, configured, let url = endpoint else { return }
         var params: [String: Any] = parameters
+        // Metrics vão como número (GA4 só agrega custom metric com valor numérico).
+        for (key, value) in metrics { params[key] = value }
         params["session_id"] = sessionID
         params["engagement_time_msec"] = 100
         if let floatValue { params["gb"] = floatValue }
