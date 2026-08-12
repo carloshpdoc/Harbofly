@@ -144,6 +144,15 @@ func fmt(_ bytes: Int64) -> String {
     return f.string(fromByteCount: bytes)
 }
 
+/// Um simulador individual do CoreSimulator (pra deleção seletiva na UI).
+struct SimDevice: Identifiable {
+    let id: String        // UDID
+    let name: String      // "iPhone 15"
+    let runtime: String   // "iOS 17.2"
+    let bytes: Int64
+    let booted: Bool
+}
+
 // MARK: - Scanner
 
 final class DiskScanner: ObservableObject {
@@ -163,6 +172,10 @@ final class DiskScanner: ObservableObject {
     @Published var simDeleteDone: Int?
     /// Runtimes de simulador não usados apagados no último clique (nil = não rodou).
     @Published var runtimeDeleteDone: Int?
+    /// Simuladores disponíveis (nome, runtime, tamanho) pra deleção seletiva na UI.
+    @Published var simulators: [SimDevice] = []
+    /// Nº de simuladores apagados na última deleção seletiva (nil = não rodou).
+    @Published var simSpecificDeleteDone: Int?
     /// Bytes liberados no último "esvaziar Lixeira" (nil = não rodou).
     @Published var trashEmptiedBytes: Int64?
     /// Nº de alertas de crescimento no último scan — badge do vigia no menu-bar.
@@ -1173,6 +1186,75 @@ final class DiskScanner: ObservableObject {
         return text.split(separator: "\n").filter { $0.contains("—") || $0.contains(" (") || $0.contains("iOS") || $0.contains("watchOS") || $0.contains("tvOS") }.count
     }
 
+    /// Lista os simuladores disponíveis com nome, runtime e tamanho da pasta
+    /// Devices/<UDID>. Assíncrono; publica em `simulators` pra sub-lista da UI.
+    func loadSimulators() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let sims = self?.collectSimulators() ?? []
+            DispatchQueue.main.async { self?.simulators = sims }
+        }
+    }
+
+    private func collectSimulators() -> [SimDevice] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = ["simctl", "list", "devices", "-j"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return [] }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let devices = json["devices"] as? [String: [[String: Any]]] else { return [] }
+        let root = home.appendingPathComponent("Library/Developer/CoreSimulator/Devices")
+        var sims: [SimDevice] = []
+        for (runtimeID, list) in devices {
+            for dev in list {
+                guard let udid = dev["udid"] as? String,
+                      let name = dev["name"] as? String else { continue }
+                // Só os disponíveis: os indisponíveis já têm o botão "apagar antigos".
+                if let avail = dev["isAvailable"] as? Bool, !avail { continue }
+                let b = size(of: root.appendingPathComponent(udid))
+                guard b > minBytes else { continue }
+                sims.append(SimDevice(id: udid, name: name, runtime: prettyRuntime(runtimeID),
+                                      bytes: b, booted: (dev["state"] as? String) == "Booted"))
+            }
+        }
+        return sims.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// "com.apple.CoreSimulator.SimRuntime.iOS-17-2" -> "iOS 17.2".
+    private func prettyRuntime(_ id: String) -> String {
+        guard let comp = id.split(separator: ".").last else { return id }
+        let parts = comp.split(separator: "-", maxSplits: 1)
+        guard parts.count == 2 else { return String(comp) }
+        return "\(parts[0]) \(parts[1].replacingOccurrences(of: "-", with: "."))"
+    }
+
+    /// Apaga simuladores específicos por UDID via `simctl delete` (aceita vários).
+    /// Irreversível (não passa pela Lixeira) — a UI confirma em dois cliques.
+    /// Atualiza a lista e re-escaneia ao fim.
+    func deleteSimulators(_ udids: [String]) {
+        guard !udids.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+            p.arguments = ["simctl", "delete"] + udids
+            p.standardOutput = Pipe()
+            p.standardError = Pipe()
+            try? p.run()
+            p.waitUntilExit()
+            let ok = p.terminationStatus == 0
+            let refreshed = self?.collectSimulators() ?? []
+            DispatchQueue.main.async {
+                self?.simSpecificDeleteDone = ok ? udids.count : 0
+                self?.simulators = refreshed
+                if ok { self?.scan() }
+            }
+        }
+    }
+
     /// Esvazia a Lixeira de verdade — mover pra Lixeira só libera espaço aqui.
     /// Best-effort: mede antes e remove o conteúdo (ignora itens travados/em uso).
     func emptyTrash() {
@@ -1277,6 +1359,9 @@ struct ContentView: View {
     @State private var confirmingRuntimeDelete = false
     @State private var confirmingEmptyTrash = false
     @State private var confirmingThinSnapshots = false
+    @State private var showSimList = false
+    @State private var simSelection = Set<String>()
+    @State private var confirmingSimSpecificDelete = false
     @State private var launchAtLogin = false
     @State private var showSupport = false
     @State private var pixCopied = false
@@ -1977,6 +2062,66 @@ struct ContentView: View {
     }
 
     // Linha read-only do tier informativo: sem seleção/exclusão, só revela no Finder.
+    private func selectedSimBytes() -> Int64 {
+        scanner.simulators.filter { simSelection.contains($0.id) }.reduce(0) { $0 + $1.bytes }
+    }
+
+    /// Sub-lista expansível do CoreSimulator: cada simulador com tamanho, seleção
+    /// múltipla e um botão pra apagar os selecionados (via `simctl delete`).
+    @ViewBuilder
+    private func simulatorList() -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Divider().padding(.vertical, 2)
+            if scanner.simulators.isEmpty {
+                Text(L10n.simNoneToDelete).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(scanner.simulators) { sim in
+                    HStack(spacing: 8) {
+                        Image(systemName: simSelection.contains(sim.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(simSelection.contains(sim.id) ? Color.accentColor : .secondary)
+                        Text("\(sim.name) · \(sim.runtime)").font(.caption).lineLimit(1)
+                        Spacer()
+                        Text(fmt(sim.bytes)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if simSelection.contains(sim.id) { simSelection.remove(sim.id) }
+                        else { simSelection.insert(sim.id) }
+                        confirmingSimSpecificDelete = false
+                    }
+                }
+                Button {
+                    if confirmingSimSpecificDelete {
+                        confirmingSimSpecificDelete = false
+                        Analytics.infoAction("deleteSimulators")
+                        let ids = Array(simSelection)
+                        simSelection.removeAll()
+                        scanner.deleteSimulators(ids)
+                    } else {
+                        scanner.simSpecificDeleteDone = nil
+                        confirmingSimSpecificDelete = true
+                    }
+                } label: {
+                    Label(confirmingSimSpecificDelete
+                            ? L10n.deleteSelectedSimsConfirm
+                            : L10n.deleteSelectedSims(count: simSelection.count, size: fmt(selectedSimBytes())),
+                          systemImage: confirmingSimSpecificDelete ? "exclamationmark.triangle.fill" : "trash")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(confirmingSimSpecificDelete ? .red : .blue)
+                .disabled(simSelection.isEmpty)
+            }
+            if let n = scanner.simSpecificDeleteDone {
+                Text(L10n.simsDeleted(n)).font(.caption)
+                    .foregroundStyle(n > 0 ? .green : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.leading, 4)
+    }
+
     private func infoRow(_ t: CleanTarget) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "info.circle")
@@ -2045,6 +2190,22 @@ struct ContentView: View {
                         .foregroundStyle(confirmingRuntimeDelete ? .red : .blue)
                     }
 
+                    // Sub-lista de simuladores individuais (apagar específicos).
+                    if t.url.path.hasSuffix("Developer/CoreSimulator") {
+                        Button {
+                            showSimList.toggle()
+                            if showSimList {
+                                Analytics.infoAction("showSimulators")
+                                scanner.loadSimulators()
+                            }
+                        } label: {
+                            Label(L10n.showSimulators,
+                                  systemImage: showSimList ? "chevron.down" : "chevron.right")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain).foregroundStyle(.blue)
+                    }
+
                     // Recuperar espaço preso por snapshots locais do TM — 2 cliques.
                     if t.canThinSnapshots {
                         Button {
@@ -2098,6 +2259,9 @@ struct ContentView: View {
                         .font(.caption)
                         .foregroundStyle(n > 0 ? .green : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if t.url.path.hasSuffix("Developer/CoreSimulator"), showSimList {
+                    simulatorList()
                 }
                 if t.url.lastPathComponent == ".Trash", let freed = scanner.trashEmptiedBytes {
                     Text(L10n.trashEmptied(fmt(freed)))

@@ -198,6 +198,18 @@ struct L {
           es: "Se borraron \(count) simulador(es) no disponible(s).", fr: "\(count) simulateur(s) indisponible(s) supprimé(s).",
           de: "\(count) nicht verfügbare(r) Simulator(en) gelöscht.", zh: "已删除 \(count) 个不可用模拟器。")
     }
+    var showSimulators: String { s("Simuladores", "Simulators", es: "Simuladores", fr: "Simulateurs", de: "Simulatoren", zh: "模拟器") }
+    func deleteSelectedSims(count: Int, size: String) -> String {
+        s("Apagar \(count) selecionado(s) (\(size))", "Delete \(count) selected (\(size))",
+          es: "Borrar \(count) seleccionado(s) (\(size))", fr: "Supprimer \(count) sélectionné(s) (\(size))",
+          de: "\(count) ausgewählte löschen (\(size))", zh: "删除选中的 \(count) 个（\(size)）")
+    }
+    var deleteSelectedSimsConfirm: String { s("Apagar de vez? (irreversível)", "Delete for good? (irreversible)", es: "¿Borrar del todo? (irreversible)", fr: "Supprimer définitivement ?", de: "Endgültig löschen?", zh: "彻底删除？（不可恢复）") }
+    func simsDeleted(_ count: Int) -> String {
+        s("\(count) simulador(es) apagado(s).", "Deleted \(count) simulator(s).",
+          es: "Se borraron \(count) simulador(es).", fr: "\(count) simulateur(s) supprimé(s).",
+          de: "\(count) Simulator(en) gelöscht.", zh: "已删除 \(count) 个模拟器。")
+    }
 
     // MARK: projetos parados (staleness)
     func staleProject(days: Int) -> String {
