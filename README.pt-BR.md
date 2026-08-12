@@ -59,7 +59,7 @@ Instalou pelo DMG? Rode `/Applications/Harbofly.app/Contents/MacOS/Harbofly scan
 - **DerivedData por projeto**: a pasta de build de cada projeto Xcode aparece separada, resolvida pro workspace dono.
 - **Detecção de projetos parados**: projeto sem atividade há 90+ dias ganha selo — e alerta vermelho se tiver **trabalho não commitado ou não pushado** (lido do git local, 100% offline).
 - **Auto-clean (opt-in, grátis)**: deixa o Harbofly fazer a faxina sozinho — **no fim do dia**, no começo do dia, ao fechar o Xcode, toda semana ou com disco baixo. Você escolhe o escopo (caches de ferramentas → projetos parados → tudo 🟢) e o mínimo. Só itens 🟢 seguros, sempre pela Lixeira, com notificação e histórico. Depois de algumas limpezas manuais, ele oferece assumir isso num toque. A automação que outros limpadores trancam num plano **Pro** pago — aqui é de graça.
-- **Simuladores antigos em 1 clique**: `simctl delete unavailable` de dentro do app, com confirmação em dois passos.
+- **Simuladores, um ou vários**: apague simuladores indisponíveis em 1 clique, ou expanda o CoreSimulator numa lista por simulador — cada um com seu tamanho — e apague só os que você escolher (`simctl delete`, confirmação em dois passos). Também limpa os **XCTestDevices**, os clones descartáveis que os testes em paralelo / xcodebuildmcp acumulam.
 - **Espaço purgeável do macOS, explicado**: mostra quanto os snapshots do Time Machine e caches de sistema ocupam — o clássico "apaguei 20 GB e o Finder não mostra".
 - **6 idiomas**: Português, English, Español, Français, Deutsch, 中文 — com troca instantânea.
 - **Feedback in-app**: bug ou ideia vai direto pro mantenedor, sem precisar de conta.

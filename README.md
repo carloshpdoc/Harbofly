@@ -67,7 +67,7 @@ install per agent.
 - **Per-project DerivedData**: each Xcode project's build folder shows up on its own, resolved to the workspace that owns it.
 - **Stale project detection**: projects with no activity for 90+ days get a badge — and a red warning if they hold **uncommitted or unpushed work** (read from your local git, fully offline).
 - **Auto-clean (opt-in, free)**: let Harbofly do the chore itself — **at the end of the day**, at the start of the day, when Xcode quits, weekly, or when disk runs low. You pick the scope (tool caches → idle projects → everything 🟢) and the minimum. Only 🟢 safe items, always through the Trash, with a notification and history. After a few manual cleanups it offers to take over in one tap. The automation other cleaners lock behind a paid **Pro** plan — here it's free.
-- **Old simulators in one click**: `simctl delete unavailable` from the app, with a two-step confirm.
+- **Simulators, one or many**: delete unavailable simulators in one click, or expand CoreSimulator into a per-simulator list — each with its size — and remove only the ones you select (`simctl delete`, two-step confirm). It also clears **XCTestDevices**, the throwaway sim clones that parallel-test / xcodebuildmcp runs pile up.
 - **macOS purgeable space, explained**: shows how much space Time Machine snapshots and system caches hold — the classic "I deleted 20 GB and Finder shows nothing".
 - **6 languages**: Português, English, Español, Français, Deutsch, 中文 — switching instantly.
 - **In-app feedback**: a bug or idea goes straight to the maintainer, no account needed.
