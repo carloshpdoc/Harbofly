@@ -53,6 +53,14 @@ harbofly clean --stale-only  # only artifacts from projects idle for 90+ days
 The CLI only ever touches the 🟢 safe tier and always goes through the Trash.
 Installed from the DMG? Run `/Applications/Harbofly.app/Contents/MacOS/Harbofly scan`.
 
+## Use it with your AI agent
+
+Harbofly ships an **agent skill** so Claude Code, Codex, or any AGENTS-aware tool
+can scan and safely clean your disk for you — handy for a nightly cleanup task.
+See [`skills/harbofly-cleanup/`](skills/harbofly-cleanup/): it wraps the CLI
+above, with `SKILL.md` (Claude Code), `AGENTS.md` (Codex), and a README covering
+install per agent.
+
 ## Features
 
 - **Auto-discovery**: scans `~/Development` for `build`, `.build`, `node_modules`, `Pods`, plus 25+ known cache locations — package managers (npm, pnpm, Bun, Gradle, Maven, Cargo, Go, Flutter, pip, uv, CocoaPods, Homebrew…), editors (VS Code, Cursor, JetBrains) and **AI tools** (Ollama, Hugging Face, LM Studio model weights). Zero path config.
