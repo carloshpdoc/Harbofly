@@ -590,6 +590,7 @@ final class DiskScanner: ObservableObject {
             // Xcode & Apple (DerivedData e DeviceSupport têm scanner próprio)
             ("Library/Developer/Xcode/Archives", "Xcode Archives", .caution, \.xcodeArchives),
             ("Library/Developer/XcodeBuildMCP/workspaces", "workspaces", .safe, \.xcodeBuildMCP),
+            ("Library/Developer/XCTestDevices", "XCTestDevices", .safe, \.xctestDevices),
             ("Library/Caches/org.swift.swiftpm", "org.swift.swiftpm", .safe, \.swiftpmCache),
             ("Library/Caches/CocoaPods", "CocoaPods", .safe, \.pkgCache),
             // Package managers / linguagens
