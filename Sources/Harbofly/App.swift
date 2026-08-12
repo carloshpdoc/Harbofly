@@ -532,9 +532,35 @@ final class DiskScanner: ObservableObject {
         return false
     }
 
-    /// Última atividade do projeto, 100% local: mtime do .git/index ou
-    /// .git/HEAD (commit/checkout/uso do git). Sobe até 3 níveis pra achar o
-    /// .git de monorepos. Sem git, cai pro mtime da pasta do projeto.
+    /// Diretório git real de `dir`. Normalmente é `dir/.git` (pasta), mas em
+    /// git worktrees (e submódulos) `.git` é um ARQUIVO com `gitdir: <path>`
+    /// apontando pro gitdir real — ex.: `<repo>/.git/worktrees/<nome>`, onde
+    /// ficam o HEAD/index daquele worktree. Sem seguir esse ponteiro, a
+    /// staleness de worktree cairia no mtime da pasta (impreciso).
+    private func gitDir(at dir: URL) -> URL? {
+        let fm = FileManager.default
+        let dotGit = dir.appendingPathComponent(".git")
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: dotGit.path, isDirectory: &isDir) else { return nil }
+        if isDir.boolValue { return dotGit }
+        // `.git` é arquivo: primeira linha "gitdir: <path>" (relativo ou absoluto).
+        guard let content = try? String(contentsOf: dotGit, encoding: .utf8) else { return nil }
+        for line in content.split(whereSeparator: \.isNewline) {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            guard t.hasPrefix("gitdir:") else { continue }
+            let p = t.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+            guard !p.isEmpty else { return nil }
+            return p.hasPrefix("/")
+                ? URL(fileURLWithPath: p)
+                : dir.appendingPathComponent(p).standardizedFileURL
+        }
+        return nil
+    }
+
+    /// Última atividade do projeto, 100% local: mtime do index/HEAD do git
+    /// (commit/checkout/uso do git). Segue o ponteiro `gitdir:` em worktrees.
+    /// Sobe até 3 níveis pra achar o .git de monorepos. Sem git, cai pro
+    /// mtime da pasta do projeto.
     private func projectActivity(from dir: URL) -> Date? {
         let fm = FileManager.default
         func mtime(_ url: URL) -> Date? {
@@ -545,8 +571,7 @@ final class DiskScanner: ObservableObject {
             // A home (e acima) nunca é raiz de projeto — um ~/.git solto
             // (dotfiles) contaminaria a data de projetos sem git.
             guard probe.path != home.path, probe.path != "/" else { break }
-            let git = probe.appendingPathComponent(".git")
-            if fm.fileExists(atPath: git.path) {
+            if let git = gitDir(at: probe) {
                 let dates = [git.appendingPathComponent("index"),
                              git.appendingPathComponent("HEAD")].compactMap(mtime)
                 if let latest = dates.max() { return latest }
