@@ -30,6 +30,12 @@ enum Analytics {
     }()
     private static var sessionID = "0"
 
+    /// Propriedades do usuário (device/locale) — coletadas 1x no start() e
+    /// anexadas a cada evento. Só metadados NÃO-identificáveis do próprio device
+    /// (idioma, país, versão do macOS, modelo, tema), no espírito do TelemetryDeck.
+    /// Nunca IP nem geolocalização — o país vem do `Locale` que o user configurou.
+    private static var userProps: [String: [String: String]] = [:]
+
     /// Só envia quando o GA4Config foi preenchido com valores reais.
     private static var configured: Bool {
         !GA4Config.measurementID.isEmpty && !GA4Config.measurementID.contains("XXXX")
@@ -78,6 +84,7 @@ enum Analytics {
         sessionID = String(Int(Date().timeIntervalSince1970))
         guard configured else { return }
         _ = clientID   // materializa/persiste o id anônimo
+        userProps = collectUserProperties()
 
         // Aquisição: primeiro launch de todos, uma vez na vida do app.
         if !UserDefaults.standard.bool(forKey: Prefs.firstLaunchSent) {
@@ -265,6 +272,44 @@ enum Analytics {
 
     // MARK: helpers
 
+    /// Metadados de device/locale como user_properties do GA4 — coletados só do
+    /// próprio Mac (Locale, ProcessInfo, sysctl), nunca IP ou geolocalização.
+    private static func collectUserProperties() -> [String: [String: String]] {
+        func p(_ v: String) -> [String: String] { ["value": v] }
+        let appLang: String
+        switch Lang.current {
+        case .pt: appLang = "pt"
+        case .en: appLang = "en"
+        case .es: appLang = "es"
+        case .fr: appLang = "fr"
+        case .de: appLang = "de"
+        case .zh: appLang = "zh"
+        }
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        // Dark mode sem AppKit: no macOS o modo escuro seta esse default global.
+        let dark = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+        var props: [String: [String: String]] = [
+            "lang": p(Locale.current.language.languageCode?.identifier ?? "und"),
+            "app_lang": p(appLang),
+            "region": p(Locale.current.region?.identifier ?? "ZZ"),
+            "os_version": p("\(os.majorVersion).\(os.minorVersion)"),
+            "appearance": p(dark ? "dark" : "light"),
+            "app_version": p(AppInfo.version),
+        ]
+        if let model = macModel() { props["model"] = p(model) }
+        return props
+    }
+
+    /// Modelo do Mac (ex.: "Mac15,3") via sysctl — só o identificador de hardware,
+    /// nunca serial nem nada que ligue a uma pessoa.
+    private static func macModel() -> String? {
+        var size = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buf = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("hw.model", &buf, &size, nil, 0) == 0 else { return nil }
+        return String(cString: buf)
+    }
+
     private static func gb(_ bytes: Int64) -> Double { Double(bytes) / 1_073_741_824 }
 
     /// Ponto único de saída: monta o payload do Measurement Protocol e faz um
@@ -282,11 +327,12 @@ enum Analytics {
         params["engagement_time_msec"] = 100
         if let floatValue { params["gb"] = floatValue }
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "client_id": clientID,
             "non_personalized_ads": true,
             "events": [["name": name, "params": params]],
         ]
+        if !userProps.isEmpty { body["user_properties"] = userProps }
         guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
 
         var req = URLRequest(url: url)
