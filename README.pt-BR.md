@@ -81,7 +81,7 @@ Instalou pelo DMG? Rode `/Applications/Harbofly.app/Contents/MacOS/Harbofly scan
 Como é uma ferramenta que apaga arquivo, ela foi feita pra ser confiável:
 
 - **Padrão = Lixeira** (restaurável); nada perigoso vem pré-selecionado; confirmação antes de qualquer exclusão.
-- **Open source de ponta a ponta**: dá pra auditar exatamente o que sai da sua máquina. O analytics é **opt-in e desligado por padrão** (via [TelemetryDeck](https://telemetrydeck.com)); quando ligado, envia só estatísticas de uso anônimas e agregadas (eventos, GB recuperados, categorias de cache) — nunca e-mail, IP, nome, caminhos ou nomes de projeto. Dá pra ligar/desligar quando quiser nas preferências.
+- **Open source de ponta a ponta**: dá pra auditar exatamente o que sai da sua máquina. O analytics é **opt-in e desligado por padrão**; quando ligado, envia só estatísticas de uso anônimas e agregadas (eventos, GB recuperados, categorias de cache, mais infos não-identificáveis do device: modelo do Mac, versão do macOS, idioma, país e tema) — nunca e-mail, IP, nome, caminhos ou nomes de projeto. Dá pra ligar/desligar quando quiser nas preferências.
 - **Assinado com Developer ID + notarizado** pela Apple; **build provenance (SLSA)** em cada release, verificável com `gh attestation verify Harbofly.dmg --repo carloshpdoc/Harbofly`.
 
 ## O que ele varre

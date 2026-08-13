@@ -89,7 +89,7 @@ install per agent.
 Since it's a tool that deletes files, it's built to be trustworthy:
 
 - **Default = Trash** (restorable); nothing risky is pre-selected; confirmation before any deletion.
-- **Open source end to end**: you can audit exactly what leaves your machine. Analytics is **opt-in and off by default** (via [TelemetryDeck](https://telemetrydeck.com)); when on, it sends only anonymous, aggregate usage stats (events, GB recovered, cache categories) — never your email, IP, name, paths, or project names. Toggle it anytime in preferences.
+- **Open source end to end**: you can audit exactly what leaves your machine. Analytics is **opt-in and off by default**; when on, it sends only anonymous, aggregate usage stats (events, GB recovered, cache categories, plus non-identifying device info: Mac model, macOS version, language, country and theme) — never your email, IP, name, paths, or project names. Toggle it anytime in preferences.
 - **Signed with a Developer ID + notarized** by Apple; **build provenance (SLSA)** on every release, verifiable with `gh attestation verify Harbofly.dmg --repo carloshpdoc/Harbofly`.
 
 ## What it scans
