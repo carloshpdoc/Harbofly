@@ -298,34 +298,52 @@ final class DiskScanner: ObservableObject {
             var freed: Int64 = 0
             var count = 0
             var anyFailed = false
+            var firstReason: String? = nil
             // Bytes liberados por tipo genérico de cache (nunca o caminho/nome real).
             var byCategory: [String: Int64] = [:]
             for item in deletable {
-                let ok: Bool
+                var ok = false
+                var gone = false      // path já não existe: benigno, não é falha
                 if item.isDocker {
                     // Docker não vai pra Lixeira: sempre prune (irreversível),
                     // independente do toggle permanente/Lixeira.
                     ok = DockerEngine.prune()
-                } else if permanently {
-                    ok = (try? FileManager.default.removeItem(at: item.url)) != nil
+                    if !ok, firstReason == nil { firstReason = "other" }
                 } else {
-                    ok = (try? FileManager.default.trashItem(at: item.url, resultingItemURL: nil)) != nil
+                    do {
+                        if permanently {
+                            try FileManager.default.removeItem(at: item.url)
+                        } else {
+                            try FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
+                        }
+                        ok = true
+                    } catch {
+                        // Se o path já sumiu (uma ferramenta regenerou/removeu entre
+                        // o scan e o confirm), é benigno: some da lista, não conta falha.
+                        if !FileManager.default.fileExists(atPath: item.url.path) {
+                            gone = true
+                        } else if firstReason == nil {
+                            firstReason = DiskScanner.deleteFailureReason(error)
+                        }
+                    }
                 }
                 if ok {
                     freed += item.bytes
                     count += 1
                     byCategory[item.category, default: 0] += item.bytes
-                } else {
+                } else if !gone {
                     anyFailed = true
                 }
-                // Feedback imediato: some da lista assim que o item vai pra
-                // Lixeira, sem esperar o rescan completo do final.
+                // Feedback imediato: some da lista assim que o item vai pra Lixeira
+                // (ou se já tinha sumido), sem esperar o rescan completo do final.
+                let drop = ok || gone
                 DispatchQueue.main.async {
                     self?.deletingDone += 1
-                    if ok { self?.targets.removeAll { $0.id == item.id } }
+                    if drop { self?.targets.removeAll { $0.id == item.id } }
                 }
             }
-            let freedFinal = freed, countFinal = count, categories = byCategory, failed = anyFailed
+            let freedFinal = freed, countFinal = count, categories = byCategory
+            let failed = anyFailed, failReason = firstReason
             DispatchQueue.main.async {
                 CleanLog.record(bytes: freedFinal, count: countFinal, byCategory: categories)
                 self?.lastFreedBytes = freedFinal
@@ -334,7 +352,7 @@ final class DiskScanner: ObservableObject {
                 self?.deleting = false
                 Analytics.deleteConfirmed(mode: permanently ? "permanent" : "trash",
                                           freedBytes: freedFinal, itemCount: countFinal, byCategory: categories)
-                if failed { Analytics.failure("delete") }
+                if failed { Analytics.failure("delete", reason: failReason) }
                 // Sem rescan completo: os itens já saíram da lista um a um, então
                 // só atualizamos o disponível real (statfs) — reflete na hora o que
                 // foi de fato liberado. Deleção permanente sobe o livre; Lixeira
@@ -342,6 +360,35 @@ final class DiskScanner: ObservableObject {
                 self?.refreshDiskSpace()
             }
         }
+    }
+
+    /// Classifica um erro de deleção num rótulo genérico ("permission" | "busy" |
+    /// "other") pro analytics — nunca expõe caminho ou nome. "notFound" é tratado
+    /// à parte no delete (path que sumiu = benigno, não é falha).
+    static func deleteFailureReason(_ error: Error) -> String {
+        let ns = error as NSError
+        // POSIX pode vir direto ou embrulhado no NSUnderlyingErrorKey.
+        let posix: Int32? = {
+            if ns.domain == NSPOSIXErrorDomain { return Int32(ns.code) }
+            if let u = ns.userInfo[NSUnderlyingErrorKey] as? NSError,
+               u.domain == NSPOSIXErrorDomain { return Int32(u.code) }
+            return nil
+        }()
+        if let posix {
+            switch posix {
+            case EACCES, EPERM: return "permission"
+            case EBUSY, ETXTBSY: return "busy"
+            default: break
+            }
+        }
+        if ns.domain == NSCocoaErrorDomain {
+            switch ns.code {
+            case NSFileWriteNoPermissionError, NSFileReadNoPermissionError: return "permission"
+            case NSFileNoSuchFileError, NSFileReadNoSuchFileError: return "notFound"
+            default: break
+            }
+        }
+        return "other"
     }
 
     /// Varredura completa, síncrona — compartilhada entre o scan() assíncrono

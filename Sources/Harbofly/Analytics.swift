@@ -175,9 +175,14 @@ enum Analytics {
     }
 
     /// Falhas (item 6): "delete" | "dockerPrune" | "feedback" | "duplicates".
-    static func failure(_ category: String) {
+    /// `reason` (opcional): rótulo genérico do motivo — ex.: "notFound" |
+    /// "permission" | "busy" | "other" — nunca caminho/nome, só pra diagnosticar
+    /// em campo mantendo a privacidade.
+    static func failure(_ category: String, reason: String? = nil) {
         guard enabled else { return }
-        signal("failure", parameters: ["category": category])
+        var parameters = ["category": category]
+        if let reason { parameters["reason"] = reason }
+        signal("failure", parameters: parameters)
     }
 
     // MARK: TIER 1 — descoberta de features
