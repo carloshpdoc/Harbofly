@@ -1526,7 +1526,7 @@ struct ContentView: View {
             if showSupport { supportOverlay }
             if showFeedback { feedbackOverlay }
         }
-        .frame(width: 470)
+        .frame(minWidth: 470, idealWidth: 470, maxWidth: .infinity)
         .onAppear {
             launchAtLogin = (SMAppService.mainApp.status == .enabled)
             Analytics.paneSwitched(to: "cleaner")
@@ -2088,7 +2088,6 @@ struct ContentView: View {
                 Text(relPath(t.url))
                     .font(.caption.monospaced()).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
-                    .help(t.url.path)   // caminho completo no hover (path corta na largura fixa)
                 Text(t.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 if let days = t.staleDays, days >= Prefs.staleThresholdDays {
                     Label(L10n.staleProject(days: days), systemImage: "moon.zzz.fill")
@@ -2115,6 +2114,7 @@ struct ContentView: View {
                 Label(L10n.revealInFinder, systemImage: "magnifyingglass")
             }
         }
+        .help(t.url.path)   // caminho completo no hover da linha inteira (o path corta na largura)
     }
 
     // Linha read-only do tier informativo: sem seleção/exclusão, só revela no Finder.
@@ -2632,8 +2632,8 @@ struct HarboflyApp: App {
 
         Window(AppInfo.name, id: AppInfo.mainWindowID) {
             ContentView(scanner: scanner, updater: updater, duplicates: duplicates, uninstaller: uninstaller)
-                .fixedSize()
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
     }
 }
