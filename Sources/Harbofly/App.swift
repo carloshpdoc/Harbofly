@@ -2088,6 +2088,7 @@ struct ContentView: View {
                 Text(relPath(t.url))
                     .font(.caption.monospaced()).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
+                    .help(t.url.path)   // caminho completo no hover (path corta na largura fixa)
                 Text(t.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 if let days = t.staleDays, days >= Prefs.staleThresholdDays {
                     Label(L10n.staleProject(days: days), systemImage: "moon.zzz.fill")
@@ -2105,6 +2106,14 @@ struct ContentView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             if selection.contains(t.id) { selection.remove(t.id) } else { selection.insert(t.id) }
+        }
+        .contextMenu {
+            Button {
+                Analytics.infoAction("revealInFinder")
+                NSWorkspace.shared.activateFileViewerSelecting([t.url])
+            } label: {
+                Label(L10n.revealInFinder, systemImage: "magnifyingglass")
+            }
         }
     }
 
