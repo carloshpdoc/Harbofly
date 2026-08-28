@@ -289,13 +289,18 @@ enum Analytics {
         case .fr: appLang = "fr"
         case .de: appLang = "de"
         case .zh: appLang = "zh"
+        case .ko: appLang = "ko"
         }
+        // Idioma foi escolhido na mão (Prefs.language setado) vs. seguindo o
+        // sistema? Distingue "fallback pra en" de "escolha deliberada".
+        let langManual = UserDefaults.standard.string(forKey: Prefs.language) != nil
         let os = ProcessInfo.processInfo.operatingSystemVersion
         // Dark mode sem AppKit: no macOS o modo escuro seta esse default global.
         let dark = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
         var props: [String: [String: String]] = [
             "lang": p(Locale.current.language.languageCode?.identifier ?? "und"),
             "app_lang": p(appLang),
+            "lang_manual": p(langManual ? "1" : "0"),
             "region": p(Locale.current.region?.identifier ?? "ZZ"),
             "os_version": p("\(os.majorVersion).\(os.minorVersion)"),
             "appearance": p(dark ? "dark" : "light"),

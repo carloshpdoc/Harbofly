@@ -86,8 +86,10 @@ enum Prefs {
     static let manualCleanCount = "manualCleanCount"
     static let autoOfferSnoozeUntil = "autoOfferSnoozeUntil"
     static let autoOfferSnoozeCount = "autoOfferSnoozeCount"
-    /// Limpezas manuais antes de oferecer a automação.
-    static let autoOfferThreshold = 3
+    /// Limpezas manuais antes de oferecer a automação. Era 3, mas os dados
+    /// mostraram que a maioria limpa 1-2x e nunca gatilhava a oferta (só 8 de
+    /// 22 usuários a viam) — baixado pra 2 pra ampliar a descoberta.
+    static let autoOfferThreshold = 2
 }
 
 // MARK: - Model
@@ -399,6 +401,7 @@ final class DiskScanner: ObservableObject {
             + scanInfo() + scanDocker() + scanCacheHome() + scanStrayGit()
             + scanDeviceSupportVersions() + scanOrphanedLeftovers() + scanGitBloat()
             + scanBigFiles() + scanTrash() + scanOrphanedAppData() + scanVMDisks()
+            + scanUnrecognizedCaches()
         // Dedupe por path: scanners podem se sobrepor (ex.: órfão curado vs
         // generalizado no mesmo bundle-id). Mantém a primeira ocorrência.
         var seen = Set<String>()
@@ -872,6 +875,11 @@ final class DiskScanner: ObservableObject {
         var out: [CleanTarget] = []
         for rel in ["Library/Containers", "Library/Application Support"] {
             let root = home.appendingPathComponent(rel)
+            // Containers são sandbox protegido pelo macOS: trashItem retorna
+            // permission-denied. Não oferecemos pra deletar — mostramos como
+            // info (revela no Finder pra remoção manual). Application Support
+            // órfão é do usuário e vai pra Lixeira normalmente.
+            let isContainer = rel.hasSuffix("Containers")
             guard let items = try? fm.contentsOfDirectory(
                 at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
             ) else { continue }
@@ -885,7 +893,8 @@ final class DiskScanner: ObservableObject {
                 let b = size(of: item)
                 if b > minBytes {
                     out.append(CleanTarget(url: item, label: name,
-                                           detailKey: \.orphanAppData, tier: .caution, bytes: b))
+                                           detailKey: isContainer ? \.orphanContainer : \.orphanAppData,
+                                           tier: isContainer ? .info : .caution, bytes: b))
                 }
             }
         }
@@ -1042,21 +1051,39 @@ final class DiskScanner: ObservableObject {
 
     /// TIER 1 — caches grandes em ~/Library/Caches que não reconhecemos: só
     /// contagem + total (sem nomes, pra não vazar bundle-id de app próprio).
-    private func unrecognizedCaches() -> (count: Int, bytes: Int64) {
+    /// Subpastas grandes (≥500MB) de ~/Library/Caches fora da lista de alvos
+    /// conhecidos. Base tanto da métrica (count+GB, SEM nomes) quanto dos itens
+    /// info mostrados ao usuário — o nome (bundle-id/ferramenta) fica só na tela.
+    private func unrecognizedCacheDirs() -> [(url: URL, bytes: Int64)] {
         let caches = home.appendingPathComponent("Library/Caches")
         guard let items = try? FileManager.default.contentsOfDirectory(
             at: caches, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
-        ) else { return (0, 0) }
+        ) else { return [] }
         let known: Set<String> = ["org.swift.swiftpm", "CocoaPods", "Homebrew", "Yarn", "pnpm",
                                    "pip", "uv", "go-build", "JetBrains", "ms-playwright", "Google"]
-        var count = 0, total: Int64 = 0
+        var out: [(url: URL, bytes: Int64)] = []
         for item in items {
             let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
             guard isDir, !known.contains(item.lastPathComponent) else { continue }
             let b = size(of: item)
-            if b >= 500_000_000 { count += 1; total += b }
+            if b >= 500_000_000 { out.append((item, b)) }
         }
-        return (count, total)
+        return out
+    }
+
+    private func unrecognizedCaches() -> (count: Int, bytes: Int64) {
+        let dirs = unrecognizedCacheDirs()
+        return (dirs.count, dirs.reduce(0) { $0 + $1.bytes })
+    }
+
+    /// Mostra os caches grandes não-reconhecidos como itens info (revela no
+    /// Finder). Turns os "246 GB invisíveis" da métrica em valor que o usuário
+    /// captura sozinho — sem enviar nome nenhum (só a métrica agregada sai).
+    private func scanUnrecognizedCaches() -> [CleanTarget] {
+        unrecognizedCacheDirs().map {
+            CleanTarget(url: $0.url, label: $0.url.lastPathComponent,
+                        detailKey: \.unrecognizedCache, tier: .info, bytes: $0.bytes)
+        }
     }
 
     // MARK: auto-clean
@@ -2432,6 +2459,7 @@ struct ContentView: View {
                     Text("Français").tag("fr")
                     Text("Deutsch").tag("de")
                     Text("简体中文").tag("zh")
+                    Text("한국어").tag("ko")
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
