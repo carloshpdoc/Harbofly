@@ -69,7 +69,7 @@ install per agent.
 - **Auto-clean (opt-in, free)**: let Harbofly do the chore itself — **at the end of the day**, at the start of the day, when Xcode quits, weekly, or when disk runs low. You pick the scope (tool caches → idle projects → everything 🟢) and the minimum. Only 🟢 safe items, always through the Trash, with a notification and history. After a few manual cleanups it offers to take over in one tap. The automation other cleaners lock behind a paid **Pro** plan — here it's free.
 - **Simulators, one or many**: delete unavailable simulators in one click, or expand CoreSimulator into a per-simulator list — each with its size — and remove only the ones you select (`simctl delete`, two-step confirm). It also clears **XCTestDevices**, the throwaway sim clones that parallel-test / xcodebuildmcp runs pile up.
 - **macOS purgeable space, explained**: shows how much space Time Machine snapshots and system caches hold — the classic "I deleted 20 GB and Finder shows nothing".
-- **6 languages**: Português, English, Español, Français, Deutsch, 中文 — switching instantly.
+- **7 languages**: Português, English, Español, Français, Deutsch, 中文, 한국어 — switching instantly.
 - **In-app feedback**: a bug or idea goes straight to the maintainer, no account needed.
 - **Disk bar** at the top, colored by pressure: green → orange (<20%) → **red (<10%)**.
 - **"Recoverable: X GB"**: the total you can free right now.
