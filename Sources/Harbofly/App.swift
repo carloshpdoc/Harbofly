@@ -1612,7 +1612,7 @@ struct ContentView: View {
             if showSupport { supportOverlay }
             if showFeedback { feedbackOverlay }
         }
-        .frame(minWidth: 470, idealWidth: 470, maxWidth: .infinity)
+        .frame(width: 470)
         .onAppear {
             launchAtLogin = (SMAppService.mainApp.status == .enabled)
             Analytics.paneSwitched(to: "cleaner")
@@ -2757,8 +2757,8 @@ struct HarboflyApp: App {
 
         Window(AppInfo.name, id: AppInfo.mainWindowID) {
             ContentView(scanner: scanner, updater: updater, duplicates: duplicates, uninstaller: uninstaller, startup: startup)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize()
         }
-        .windowResizability(.contentMinSize)
+        .windowResizability(.contentSize)
     }
 }
