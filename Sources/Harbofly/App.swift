@@ -130,6 +130,9 @@ struct CleanTarget: Identifiable {
     /// Dias desde a última atividade do projeto dono (só artifacts de dev;
     /// nil quando não se aplica ou não deu pra medir).
     var staleDays: Int? = nil
+    /// mtime do arquivo mais recente dentro do alvo = "quando foi tocado pela
+    /// última vez". Sinal direto de quão velho/abandonado é o cache/artifact.
+    var lastModified: Date? = nil
     /// Projeto parado com mudanças não commitadas ou commits não pushados —
     /// trabalho esquecido sem backup no remoto (só checado quando parado).
     var unsavedWork = false
@@ -144,6 +147,25 @@ func fmt(_ bytes: Int64) -> String {
     let f = ByteCountFormatter()
     f.countStyle = .file
     return f.string(fromByteCount: bytes)
+}
+
+/// Idade relativa ("há 3 meses" / "3 months ago") no idioma corrente do app.
+/// Compartilhado pelo cleaner (idade dos caches) e pela aba Apps (última vez aberto).
+func relativeAge(_ date: Date) -> String {
+    let f = RelativeDateTimeFormatter()
+    f.unitsStyle = .full
+    let id: String
+    switch Lang.current {
+    case .pt: id = "pt_BR"
+    case .en: id = "en"
+    case .es: id = "es"
+    case .fr: id = "fr"
+    case .de: id = "de"
+    case .zh: id = "zh_Hans"
+    case .ko: id = "ko"
+    }
+    f.locale = Locale(identifier: id)
+    return f.localizedString(for: date, relativeTo: Date())
 }
 
 /// Um simulador individual do CoreSimulator (pra deleção seletiva na UI).
@@ -427,39 +449,67 @@ final class DiskScanner: ObservableObject {
     }
 
     private func size(of url: URL) -> Int64 {
+        var newest: Date? = nil
+        return size(of: url, newest: &newest)
+    }
+
+    /// Igual ao size(of:), mas no mesmo walk captura o mtime mais recente
+    /// (arquivo mais novo dentro do alvo) — custo ~zero, é o mesmo getattr.
+    private func size(of url: URL, newest: inout Date?) -> Int64 {
+        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .contentModificationDateKey]
         guard let en = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey],
-            options: []
+            at: url, includingPropertiesForKeys: keys, options: []
         ) else { return 0 }
         var total: Int64 = 0
+        var maxDate: Date? = nil
         for case let f as URL in en {
-            if let v = try? f.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey]) {
+            if let v = try? f.resourceValues(forKeys: Set(keys)) {
                 total += Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
+                if let d = v.contentModificationDate, d > (maxDate ?? .distantPast) { maxDate = d }
             }
         }
+        // considera o mtime do próprio diretório-raiz (pasta tocada/vazia)
+        if let dv = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+           dv > (maxDate ?? .distantPast) { maxDate = dv }
+        newest = maxDate
         return total
     }
 
     /// Descobre sozinho build artifacts sob ~/Development (sem config de path).
     private func scanDevelopment() -> [CleanTarget] {
         let dev = home.appendingPathComponent("Development")
-        let names: Set<String> = ["build", ".build", "node_modules", "Pods", "DerivedData",
-                                  ".venv", "venv", ".next", ".turbo", ".parcel-cache",
-                                  "__pycache__", "Carthage", "target", "dist"]
+        let names: Set<String> = [
+            "build", ".build", "node_modules", "Pods", "DerivedData",
+            ".venv", "venv", ".next", ".turbo", ".parcel-cache", "__pycache__", "Carthage",
+            "target", "dist",
+            // + stacks (paridade com o kondo): nomes específicos entram direto;
+            // nomes genéricos (vendor/bin/obj/_build/deps) exigem marcador no guard.
+            ".gradle", ".dart_tool", ".terraform", ".stack-work", ".godot", ".import",
+            "zig-cache", "zig-out", ".svelte-kit", ".nuxt", ".angular", "elm-stuff",
+            "vendor", "_build", "deps", "bin", "obj",
+        ]
         var out: [CleanTarget] = []
 
-        // 'target' (Rust) e 'dist' (JS) são nomes genéricos: só contam como
-        // artifact regenerável se o projeto tiver o marcador do ecossistema
-        // (Cargo.toml / package.json), pra nunca apagar pasta de dados do usuário.
+        // Nomes genéricos ('target', 'vendor', 'bin'…) só contam como artifact
+        // regenerável se o projeto tiver o marcador do ecossistema, pra nunca
+        // apagar pasta de dados do usuário. Nomes específicos passam direto.
         func isBuildArtifact(_ url: URL) -> Bool {
             let name = url.lastPathComponent
             guard names.contains(name) else { return false }
             let fm = FileManager.default
             let projectDir = url.deletingLastPathComponent()
+            func has(_ file: String) -> Bool {
+                fm.fileExists(atPath: projectDir.appendingPathComponent(file).path)
+            }
+            func hasExt(_ ext: String) -> Bool {
+                (try? fm.contentsOfDirectory(atPath: projectDir.path))?.contains { $0.hasSuffix("." + ext) } ?? false
+            }
             switch name {
-            case "target": return fm.fileExists(atPath: projectDir.appendingPathComponent("Cargo.toml").path)
-            case "dist": return fm.fileExists(atPath: projectDir.appendingPathComponent("package.json").path)
+            case "target": return has("Cargo.toml") || has("pom.xml") || has("build.sbt")  // Rust/Maven/SBT
+            case "dist": return has("package.json")                                          // JS
+            case "vendor": return has("go.mod") || has("composer.json")                      // Go/PHP
+            case "_build", "deps": return has("mix.exs")                                      // Elixir
+            case "bin", "obj": return hasExt("csproj") || hasExt("sln") || hasExt("fsproj") || hasExt("vbproj")  // .NET
             default: return true
             }
         }
@@ -473,7 +523,8 @@ final class DiskScanner: ObservableObject {
                 let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 guard isDir else { continue }
                 if isBuildArtifact(item) {
-                    let b = size(of: item)
+                    var newest: Date? = nil
+                    let b = size(of: item, newest: &newest)
                     if b > minBytes {
                         let projectDir = item.deletingLastPathComponent()
                         var stale: Int? = nil
@@ -488,6 +539,7 @@ final class DiskScanner: ObservableObject {
                             tier: .safe,
                             bytes: b,
                             staleDays: stale,
+                            lastModified: newest,
                             unsavedWork: isStale && hasUnsavedWork(projectDir)
                         ))
                     }
@@ -516,7 +568,8 @@ final class DiskScanner: ObservableObject {
         for item in items {
             let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
             guard isDir else { continue }
-            let b = size(of: item)
+            var newest: Date? = nil
+            let b = size(of: item, newest: &newest)
             guard b > minBytes else { continue }
 
             let raw = item.lastPathComponent
@@ -538,7 +591,7 @@ final class DiskScanner: ObservableObject {
             }
             out.append(CleanTarget(url: item, label: "DerivedData/\(project)",
                                    detailKey: \.xcodeDerived, tier: .safe, bytes: b,
-                                   staleDays: stale, unsavedWork: unsaved))
+                                   staleDays: stale, lastModified: newest, unsavedWork: unsaved))
         }
         return out
     }
@@ -692,9 +745,10 @@ final class DiskScanner: ObservableObject {
         for (rel, label, tier, detail) in specs {
             let url = home.appendingPathComponent(rel)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            let b = size(of: url)
+            var newest: Date? = nil
+            let b = size(of: url, newest: &newest)
             if b > minBytes {
-                out.append(CleanTarget(url: url, label: label, detailKey: detail, tier: tier, bytes: b))
+                out.append(CleanTarget(url: url, label: label, detailKey: detail, tier: tier, bytes: b, lastModified: newest))
             }
         }
         return out
@@ -1418,16 +1472,18 @@ final class DiskScanner: ObservableObject {
 // MARK: - UI
 
 /// Painel ativo do popover/janela: limpeza de disco, duplicatas ou histórico.
-enum Pane { case cleaner, duplicates, uninstall, stats }
+enum Pane { case cleaner, duplicates, uninstall, startup, stats }
 
 struct ContentView: View {
     @ObservedObject var scanner: DiskScanner
     @ObservedObject var updater: Updater
     @ObservedObject var duplicates: DuplicateScanner
     @ObservedObject var uninstaller: AppUninstaller
+    @ObservedObject var startup: StartupManager
     @Environment(\.openWindow) private var openWindow
     @State private var pane: Pane = .cleaner
     @State private var selection = Set<UUID>()
+    @State private var cleanerQuery = ""
     @State private var confirming = false
     @State private var confirmingSimDelete = false
     @State private var confirmingRuntimeDelete = false
@@ -1526,6 +1582,7 @@ struct ContentView: View {
                     Text(L10n.paneCleaner).tag(Pane.cleaner)
                     Text(L10n.paneDuplicates).tag(Pane.duplicates)
                     Text(L10n.paneUninstall).tag(Pane.uninstall)
+                    Text(L10n.paneStartup).tag(Pane.startup)
                     Text(L10n.paneStats).tag(Pane.stats)
                 }
                 .pickerStyle(.segmented).labelsHidden()
@@ -1540,6 +1597,8 @@ struct ContentView: View {
                     DuplicatesView(scanner: duplicates)
                 } else if pane == .uninstall {
                     UninstallView(scanner: uninstaller)
+                } else if pane == .startup {
+                    StartupView(scanner: startup)
                 } else {
                     StatsView()
                 }
@@ -2058,6 +2117,13 @@ struct ContentView: View {
         }
     }
 
+    /// Casa a busca do cleaner por nome do item ou caminho.
+    private func matchesQuery(_ t: CleanTarget) -> Bool {
+        let q = cleanerQuery.trimmingCharacters(in: .whitespaces).lowercased()
+        if q.isEmpty { return true }
+        return t.displayLabel.lowercased().contains(q) || t.url.path.lowercased().contains(q)
+    }
+
     private var listSection: some View {
         Group {
             if scanner.targets.isEmpty {
@@ -2065,19 +2131,40 @@ struct ContentView: View {
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
+                let safe = safeTargets.filter(matchesQuery)
+                let caution = cautionTargets.filter(matchesQuery)
+                let info = infoTargets.filter(matchesQuery)
+                HStack {
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(.secondary)
+                        TextField(L10n.searchApps, text: $cleanerQuery).textFieldStyle(.plain).frame(width: 150)
+                        if !cleanerQuery.isEmpty {
+                            Button { cleanerQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
+                                .buttonStyle(.plain).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color.gray.opacity(0.12)).clipShape(Capsule())
+                    .fixedSize()
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
-                        if !safeTargets.isEmpty {
-                            tierHeader(L10n.tierSafe, safeTargets)
-                            ForEach(safeTargets) { row($0) }
+                        if safe.isEmpty && caution.isEmpty && info.isEmpty {
+                            Text(L10n.nothingFound).font(.callout).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, minHeight: 120)
                         }
-                        if !cautionTargets.isEmpty {
-                            tierHeader(L10n.tierCaution, cautionTargets)
-                            ForEach(cautionTargets) { row($0) }
+                        if !safe.isEmpty {
+                            tierHeader(L10n.tierSafe, safe)
+                            ForEach(safe) { row($0) }
                         }
-                        if !infoTargets.isEmpty {
-                            tierHeader(L10n.tierInfo, infoTargets)
-                            ForEach(infoTargets) { infoRow($0) }
+                        if !caution.isEmpty {
+                            tierHeader(L10n.tierCaution, caution)
+                            ForEach(caution) { row($0) }
+                        }
+                        if !info.isEmpty {
+                            tierHeader(L10n.tierInfo, info)
+                            ForEach(info) { infoRow($0) }
                         }
                     }
                     .padding(.trailing, 4)
@@ -2095,6 +2182,11 @@ struct ContentView: View {
             Text(fmt(total)).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
         }
         .padding(.top, 6)
+    }
+
+    /// Cache "velho" = sem toque há mais que o limiar de projeto parado → destaca.
+    private func isOldCache(_ date: Date) -> Bool {
+        Date().timeIntervalSince(date) >= Double(Prefs.staleThresholdDays) * 86_400
     }
 
     private func row(_ t: CleanTarget) -> some View {
@@ -2116,6 +2208,10 @@ struct ContentView: View {
                     .font(.caption.monospaced()).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
                 Text(t.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                if let m = t.lastModified {
+                    Label(relativeAge(m), systemImage: "clock")
+                        .font(.caption).foregroundStyle(isOldCache(m) ? .orange : .secondary)
+                }
                 if let days = t.staleDays, days >= Prefs.staleThresholdDays {
                     Label(L10n.staleProject(days: days), systemImage: "moon.zzz.fill")
                         .font(.caption).foregroundStyle(.orange)
@@ -2649,17 +2745,18 @@ struct HarboflyApp: App {
     // duplicatas ao alternar barra de menu ↔ janela.
     @StateObject private var duplicates = DuplicateScanner()
     @StateObject private var uninstaller = AppUninstaller()
+    @StateObject private var startup = StartupManager()
 
     var body: some Scene {
         MenuBarExtra {
-            ContentView(scanner: scanner, updater: updater, duplicates: duplicates, uninstaller: uninstaller)
+            ContentView(scanner: scanner, updater: updater, duplicates: duplicates, uninstaller: uninstaller, startup: startup)
         } label: {
             MenuBarLabel(scanner: scanner)
         }
         .menuBarExtraStyle(.window)
 
         Window(AppInfo.name, id: AppInfo.mainWindowID) {
-            ContentView(scanner: scanner, updater: updater, duplicates: duplicates, uninstaller: uninstaller)
+            ContentView(scanner: scanner, updater: updater, duplicates: duplicates, uninstaller: uninstaller, startup: startup)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .windowResizability(.contentMinSize)

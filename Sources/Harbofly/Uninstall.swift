@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CoreServices  // MDItem — última vez que o app foi aberto (kMDItemLastUsedDate)
 
 // MARK: - App uninstaller
 
@@ -15,6 +16,13 @@ struct InstalledApp: Identifiable {
     /// Rastros que existem no disco (fora o bundle).
     let leftovers: [URL]
     let leftoverBytes: Int64
+    /// Última vez que o app foi aberto (kMDItemLastUsedDate do Spotlight). nil se
+    /// nunca aberto ou Spotlight sem o dado — a UI mostra "—" nesses casos.
+    let lastUsed: Date?
+    /// Fabricante inferido do bundle-id (com.google.Chrome → "Google").
+    let vendor: String
+    /// Categoria do Info.plist (LSApplicationCategoryType) — "Developer Tools"…
+    let category: String
     var totalBytes: Int64 { appBytes + leftoverBytes }
     /// Tudo que vai pra Lixeira ao desinstalar: bundle + rastros.
     var allPaths: [URL] { [appURL] + leftovers }
@@ -85,9 +93,13 @@ final class AppUninstaller: ObservableObject {
                 let leftovers = leftoverPaths(bundleID: bundleID, name: name)
                 let appBytes = size(of: appURL)
                 let leftoverBytes = leftovers.reduce(Int64(0)) { $0 + size(of: $1) }
+                let category = categoryLabel(d["LSApplicationCategoryType"] as? String)
                 out.append(InstalledApp(name: name, bundleID: bundleID, appURL: appURL,
                                         appBytes: appBytes, leftovers: leftovers,
-                                        leftoverBytes: leftoverBytes))
+                                        leftoverBytes: leftoverBytes,
+                                        lastUsed: lastUsedDate(appURL, exe: d["CFBundleExecutable"] as? String),
+                                        vendor: vendor(from: bundleID),
+                                        category: category))
             }
         }
         return out.sorted { $0.totalBytes > $1.totalBytes }
@@ -124,6 +136,44 @@ final class AppUninstaller: ObservableObject {
             for g in items where g.lastPathComponent.contains(bundleID) { out.append(g) }
         }
         return out
+    }
+
+    /// "Última vez aberto". Tenta o kMDItemLastUsedDate do Spotlight (preciso
+    /// quando existe), mas o macOS moderno quase nunca o popula pra apps — então
+    /// o fallback real é o **atime do executável** (bumpa ao lançar o app). Erra
+    /// pro lado seguro: leituras acidentais só deixam a data mais recente, nunca
+    /// marcam um app ativo como abandonado. Ler o atime via stat NÃO altera o atime.
+    private func lastUsedDate(_ appURL: URL, exe: String?) -> Date? {
+        if let item = MDItemCreate(kCFAllocatorDefault, appURL.path as CFString),
+           let d = MDItemCopyAttribute(item, kMDItemLastUsedDate) as? Date {
+            return d
+        }
+        if let exe {
+            let exeURL = appURL.appendingPathComponent("Contents/MacOS/\(exe)")
+            if let d = try? exeURL.resourceValues(forKeys: [.contentAccessDateKey]).contentAccessDate {
+                return d
+            }
+        }
+        return try? appURL.resourceValues(forKeys: [.contentAccessDateKey]).contentAccessDate
+    }
+
+    /// Fabricante a partir do bundle-id reverse-DNS: com.google.Chrome → "Google",
+    /// com.apple.Safari → "Apple". Fallback pro 1º segmento ou "Outros".
+    private func vendor(from bundleID: String) -> String {
+        let parts = bundleID.lowercased().split(separator: ".")
+        guard parts.count >= 2 else { return "Outros" }
+        // com/org/io/net/dev + <fabricante> + <app...>
+        let common: Set<String> = ["com", "org", "io", "net", "dev", "app", "co", "me"]
+        let seg = common.contains(String(parts[0])) ? parts[1] : parts[0]
+        return seg.prefix(1).uppercased() + seg.dropFirst()
+    }
+
+    /// LSApplicationCategoryType (public.app-category.developer-tools) → rótulo.
+    private func categoryLabel(_ raw: String?) -> String {
+        guard let raw, let last = raw.split(separator: ".").last else { return "—" }
+        return last.split(separator: "-")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
     }
 
     /// Tamanho de um arquivo solto (plist/cookies) OU de uma pasta (recursivo).

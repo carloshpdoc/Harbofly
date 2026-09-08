@@ -63,11 +63,15 @@ install per agent.
 
 ## Features
 
-- **Auto-discovery**: scans `~/Development` for `build`, `.build`, `node_modules`, `Pods`, plus 25+ known cache locations — package managers (npm, pnpm, Bun, Gradle, Maven, Cargo, Go, Flutter, pip, uv, CocoaPods, Homebrew…), editors (VS Code, Cursor, JetBrains) and **AI tools** (Ollama, Hugging Face, LM Studio model weights). Zero path config.
+- **Auto-discovery**: scans `~/Development` for build artifacts across 20+ stacks — `node_modules`, `.build`, `target` (Rust/Maven/SBT), `.gradle`, `.dart_tool`, `vendor` (Go/PHP), `bin`/`obj` (.NET), `_build` (Elixir), `.terraform`, `.godot`, `zig-out` and more (generic names are guarded by the ecosystem's marker file, so your own folders are never touched), plus 25+ known cache locations — package managers (npm, pnpm, Bun, Gradle, Maven, Cargo, Go, Flutter, pip, uv, CocoaPods, Homebrew…), editors (VS Code, Cursor, JetBrains) and **AI tools** (Ollama, Hugging Face, LM Studio model weights). Zero path config.
 - **Per-project DerivedData**: each Xcode project's build folder shows up on its own, resolved to the workspace that owns it.
 - **Stale project detection**: projects with no activity for 90+ days get a badge — and a red warning if they hold **uncommitted or unpushed work** (read from your local git, fully offline).
 - **Auto-clean (opt-in, free)**: let Harbofly do the chore itself — **at the end of the day**, at the start of the day, when Xcode quits, weekly, or when disk runs low. You pick the scope (tool caches → idle projects → everything 🟢) and the minimum. Only 🟢 safe items, always through the Trash, with a notification and history. After a few manual cleanups it offers to take over in one tap. The automation other cleaners lock behind a paid **Pro** plan — here it's free.
 - **Simulators, one or many**: delete unavailable simulators in one click, or expand CoreSimulator into a per-simulator list — each with its size — and remove only the ones you select (`simctl delete`, two-step confirm). It also clears **XCTestDevices**, the throwaway sim clones that parallel-test / xcodebuildmcp runs pile up.
+- **App uninstaller with last-used dates**: lists installed apps with their full footprint (bundle + every leftover it scatters), and **when each app was last opened** — so the ones you haven't touched in months float up. Sort by size, last used, vendor or category, search by name, and uninstall (to the Trash, restorable).
+- **Startup items manager**: see what launches on its own at login and in the background (Docker, updaters, agents…) and **disable the excess** — reversible (the agent is moved aside, not deleted; re-enable anytime). System/root daemons are shown read-only.
+- **Age on every item**: each cache/artifact shows how long since it was last touched, so you know at a glance what's abandoned.
+- **Search** in the cleaner and apps lists.
 - **macOS purgeable space, explained**: shows how much space Time Machine snapshots and system caches hold — the classic "I deleted 20 GB and Finder shows nothing".
 - **7 languages**: Português, English, Español, Français, Deutsch, 中文, 한국어 — switching instantly.
 - **In-app feedback**: a bug or idea goes straight to the maintainer, no account needed.
