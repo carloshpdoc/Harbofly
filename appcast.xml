@@ -3,13 +3,13 @@
     <channel>
         <title>Harbofly</title>
         <item>
-            <title>1.12.0</title>
-            <pubDate>Tue, 08 Sep 2026 03:47:31 +0000</pubDate>
-            <sparkle:version>117</sparkle:version>
-            <sparkle:shortVersionString>1.12.0</sparkle:shortVersionString>
+            <title>1.12.1</title>
+            <pubDate>Tue, 08 Sep 2026 16:25:16 +0000</pubDate>
+            <sparkle:version>119</sparkle:version>
+            <sparkle:shortVersionString>1.12.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/carloshpdoc/Harbofly/releases/download/v1.12.0/Harbofly.dmg" length="6003445" type="application/octet-stream" sparkle:edSignature="1KiGhUDmqAWPBEhhCs8/xA7L/aoMate52w/UX5yB6Bgr3263Fs3nx6QJ0sAl7tlSUjChUpQekeidlTHTLuDCBA=="/>
+            <enclosure url="https://github.com/carloshpdoc/Harbofly/releases/download/v1.12.1/Harbofly.dmg" length="6001195" type="application/octet-stream" sparkle:edSignature="/WQb1u9holkxOiUXPPt9k3My3VvwRW5G3b9oLKCWmA//0W+pdPmc09RU9OKLFWX7KO1ZrAKmXPnAYLwqohpfDA=="/>
         </item>
     </channel>
 </rss>
