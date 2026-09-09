@@ -179,7 +179,38 @@ struct SimDevice: Identifiable {
 
 // MARK: - Scanner
 
+/// Caixa de resultado pro `bounded(_:_:)` transferir o valor da thread de
+/// trabalho pra chamadora (leitura só após a barreira do semáforo).
+private final class ResultBox<T> { var value: T?; init() {} }
+
 final class DiskScanner: ObservableObject {
+    /// Teto do watchdog do scan: se a varredura não terminar nesse tempo (um
+    /// enumerador travado no kernel), finaliza com o parcial e libera a UI.
+    /// É backstop — o teto por-scanner (folderScanTimeout) já contém o caso comum.
+    private static let scanWatchdogSeconds: TimeInterval = 45
+    /// Teto por scanner de pasta suscetível a wedge (Containers/Application
+    /// Support/pastas do usuário). Estourou = abandona aquele scanner e segue.
+    private static let folderScanTimeout: TimeInterval = 8
+    /// Incrementado a cada scan(); identifica o scan corrente pro watchdog e pro
+    /// streaming não cruzarem resultados de varreduras diferentes.
+    private var scanGeneration = 0
+
+    /// Roda `work` numa thread separada e devolve nil se estourar `timeout`. Pro
+    /// sizing de pastas que podem travar pra sempre no kernel (getattrlistbulk
+    /// preso num file-provider órfão): a thread abandonada fica parada até o
+    /// syscall retornar (ou nunca), mas o scan não trava junto. Raro e contido.
+    private func bounded<T>(_ timeout: TimeInterval, _ work: @escaping () -> T) -> T? {
+        let box = ResultBox<T>()
+        let sem = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            box.value = work()
+            sem.signal()
+        }
+        // Só lê box.value no caminho de sucesso (barreira do semáforo garante o
+        // happens-before); no timeout, ignora — a escrita tardia fica sem leitor.
+        return sem.wait(timeout: .now() + timeout) == .success ? box.value : nil
+    }
+
     @Published var targets: [CleanTarget] = []
     @Published var scanning = false
     @Published var freeBytes: Int64 = 0
@@ -261,11 +292,37 @@ final class DiskScanner: ObservableObject {
         // Não escanear no meio de uma limpeza: o rescan final do delete() reconcilia.
         guard !scanning, !deleting else { return }
         scanning = true
+        scanGeneration &+= 1
+        let gen = scanGeneration
         let startedAt = Date()
+        // Zera a lista já: o streaming abaixo repopula progressivamente. Sem isso,
+        // o resultado do scan anterior fica visível misturado com os itens novos.
+        targets = []
+        // Watchdog: um único enumerador do sistema pode travar pra sempre no
+        // kernel (getattrlistbulk preso num file-provider órfão / iCloud dataless
+        // / mount de rede morto). Sem isso o spinner rodava infinito ("escaneando
+        // sem parar"). Se estourar o teto, finaliza com o que já apareceu no
+        // streaming e libera a UI. gen evita que um watchdog velho mate um scan novo.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.scanWatchdogSeconds) { [weak self] in
+            guard let self = self, self.scanning, self.scanGeneration == gen else { return }
+            self.scanning = false
+            self.lastScan = Date()
+        }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             let (free, total) = self.diskSpace()
-            let found = self.collectAll()
+            // Streaming: cada scanner que termina já joga seus itens na tela
+            // (ordenados por tamanho), pro usuário ver os grandes recuperáveis em
+            // segundos em vez de esperar a varredura inteira num disco cheio.
+            let found = self.collectAll { batch in
+                DispatchQueue.main.async {
+                    guard self.scanGeneration == gen else { return }   // rescan/limpeza começou outro
+                    var seen = Set(self.targets.map { $0.url.path })
+                    self.targets += batch.filter { seen.insert($0.url.path).inserted }
+                    self.targets.sort { $0.bytes > $1.bytes }
+                    if self.freeBytes == 0 { self.freeBytes = free; self.totalBytes = total }
+                }
+            }
             // Detecção de crescimento: diffa a paisagem atual contra o snapshot
             // e grava o novo. Fora do collectAll pra não pesar no modo CLI.
             let growth = self.growthAlerts(from: found)
@@ -282,6 +339,10 @@ final class DiskScanner: ObservableObject {
                 }
             }
             DispatchQueue.main.async {
+                // Se um novo scan já começou (gen mudou), descarta este resultado.
+                // Se só o watchdog disparou (scanning já false, mesmo gen), ainda
+                // reconcilia pro resultado completo — o scan terminou, só demorou.
+                guard self.scanGeneration == gen else { return }
                 self.freeBytes = free
                 self.totalBytes = total
                 self.targets = growth + found
@@ -417,13 +478,36 @@ final class DiskScanner: ObservableObject {
 
     /// Varredura completa, síncrona — compartilhada entre o scan() assíncrono
     /// da UI e o modo CLI.
-    func collectAll() -> [CleanTarget] {
+    /// `onBatch` (GUI): recebe o resultado de cada scanner assim que ele termina,
+    /// pra popular a lista progressivamente em vez de esperar todos os 15 (o disco
+    /// cheio faz a varredura levar dezenas de segundos). O CLI passa nil e só usa
+    /// o retorno final. A ordem dos scanners é do mais valioso pro menos (dev
+    /// primeiro) pra o usuário ver logo os grandes recuperáveis.
+    func collectAll(onBatch: (([CleanTarget]) -> Void)? = nil) -> [CleanTarget] {
         unsavedCache.removeAll()
-        var found = scanDevelopment() + scanDerivedData() + scanLibrary()
-            + scanInfo() + scanDocker() + scanCacheHome() + scanStrayGit()
-            + scanDeviceSupportVersions() + scanOrphanedLeftovers() + scanGitBloat()
-            + scanBigFiles() + scanTrash() + scanOrphanedAppData() + scanVMDisks()
-            + scanUnrecognizedCaches()
+        var found: [CleanTarget] = []
+        func run(_ f: () -> [CleanTarget]) {
+            let r = f()
+            if let onBatch, !r.isEmpty { onBatch(r) }
+            found += r
+        }
+        // Scanners que varrem áreas suscetíveis a file-provider órfão / iCloud
+        // dataless (~/Library/Containers, ~/Library/Application Support, pastas do
+        // usuário) rodam com teto de tempo: se o getattrlistbulk travar no kernel,
+        // a thread é abandonada e o scan segue, em vez de wedgar a varredura toda.
+        // (O CLI roda direto, sem teto: o Terminal tem Full Disk Access e não trava.)
+        func runBounded(_ f: @escaping () -> [CleanTarget]) {
+            guard onBatch != nil else { return run(f) }   // CLI: sem teto
+            run { self.bounded(Self.folderScanTimeout, f) ?? [] }
+        }
+        // Ordem: primeiro os scanners de tiers LIMPÁVEIS que não tocam áreas de
+        // nuvem; por último os que varrem Containers/Application Support/pastas do
+        // usuário (suscetíveis a wedge) — e esses com teto de tempo.
+        run(scanDevelopment); run(scanDerivedData); run(scanLibrary)
+        run(scanDocker); run(scanCacheHome); run(scanStrayGit)
+        run(scanDeviceSupportVersions); run(scanOrphanedLeftovers); run(scanGitBloat)
+        run(scanTrash); run(scanVMDisks); run(scanUnrecognizedCaches)
+        runBounded(scanOrphanedAppData); runBounded(scanInfo); runBounded(scanBigFiles)
         // Dedupe por path: scanners podem se sobrepor (ex.: órfão curado vs
         // generalizado no mesmo bundle-id). Mantém a primeira ocorrência.
         var seen = Set<String>()
@@ -514,6 +598,11 @@ final class DiskScanner: ObservableObject {
             }
         }
 
+        // 1ª passada (barata): só desce a árvore e coleta os candidatos a
+        // artifact — nenhum sizing aqui. O sizing (walk recursivo de cada
+        // node_modules/.venv/.build) é o gargalo: dezenas de segundos somados
+        // sequencialmente. Separá-lo deixa paralelizar na 2ª passada.
+        var candidates: [URL] = []
         func recurse(_ dir: URL, depth: Int) {
             guard depth <= 3 else { return }
             guard let items = try? FileManager.default.contentsOfDirectory(
@@ -523,34 +612,45 @@ final class DiskScanner: ObservableObject {
                 let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 guard isDir else { continue }
                 if isBuildArtifact(item) {
-                    var newest: Date? = nil
-                    let b = size(of: item, newest: &newest)
-                    if b > minBytes {
-                        let projectDir = item.deletingLastPathComponent()
-                        var stale: Int? = nil
-                        if let last = projectActivity(from: projectDir) {
-                            stale = max(0, Int(Date().timeIntervalSince(last) / 86_400))
-                        }
-                        let isStale = (stale ?? 0) >= Prefs.staleThresholdDays
-                        out.append(CleanTarget(
-                            url: item,
-                            label: "\(projectDir.lastPathComponent)/\(item.lastPathComponent)",
-                            detailKey: \.devArtifact,
-                            tier: .safe,
-                            bytes: b,
-                            staleDays: stale,
-                            lastModified: newest,
-                            unsavedWork: isStale && hasUnsavedWork(projectDir)
-                        ))
-                    }
+                    candidates.append(item)
                     // não desce dentro do artifact
                 } else {
                     recurse(item, depth: depth + 1)
                 }
             }
         }
-
         recurse(dev, depth: 0)
+
+        // 2ª passada (cara): dimensiona os candidatos em paralelo (I/O + getattr
+        // por arquivo). Cada índice é escrito por exatamente uma iteração do
+        // concurrentPerform, então não precisa de lock. Os nil (abaixo do piso)
+        // caem no compactMap no fim.
+        var sized = [CleanTarget?](repeating: nil, count: candidates.count)
+        sized.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: candidates.count) { i in
+                let item = candidates[i]
+                var newest: Date? = nil
+                let b = size(of: item, newest: &newest)
+                guard b > minBytes else { return }
+                let projectDir = item.deletingLastPathComponent()
+                var stale: Int? = nil
+                if let last = projectActivity(from: projectDir) {
+                    stale = max(0, Int(Date().timeIntervalSince(last) / 86_400))
+                }
+                let isStale = (stale ?? 0) >= Prefs.staleThresholdDays
+                buf[i] = CleanTarget(
+                    url: item,
+                    label: "\(projectDir.lastPathComponent)/\(item.lastPathComponent)",
+                    detailKey: \.devArtifact,
+                    tier: .safe,
+                    bytes: b,
+                    staleDays: stale,
+                    lastModified: newest,
+                    unsavedWork: isStale && hasUnsavedWork(projectDir)
+                )
+            }
+        }
+        out = sized.compactMap { $0 }
         return out
     }
 
@@ -608,15 +708,25 @@ final class DiskScanner: ObservableObject {
 
     /// Cache por scan: projeto -> tem trabalho não salvo (evita repetir o
     /// `git status` quando vários artifacts pertencem ao mesmo projeto).
+    /// Protegido por lock: o sizing de ~/Development roda em paralelo
+    /// (concurrentPerform) e vários workers podem tocar o cache ao mesmo tempo.
     private var unsavedCache: [String: Bool] = [:]
+    private let unsavedCacheLock = NSLock()
 
     /// true se o repo tem mudanças não commitadas ou commits não pushados.
     /// Só é chamado pra projetos PARADOS (é onde o aviso importa: trabalho
     /// esquecido sem backup no remoto). Local, via /usr/bin/git — sem rede.
     private func hasUnsavedWork(_ dir: URL) -> Bool {
-        if let cached = unsavedCache[dir.path] { return cached }
+        unsavedCacheLock.lock()
+        let cached = unsavedCache[dir.path]
+        unsavedCacheLock.unlock()
+        if let cached { return cached }
+        // git roda FORA do lock (é o custo real): no pior caso dois workers
+        // checam o mesmo projeto uma vez — resultado idêntico, sem corromper o dict.
         let result = checkUnsavedWork(dir)
+        unsavedCacheLock.lock()
         unsavedCache[dir.path] = result
+        unsavedCacheLock.unlock()
         return result
     }
 

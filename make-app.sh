@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP_NAME="Harbofly"                   # nome de exibição / bundle
+APP_NAME="${APP_NAME:-Harbofly}"      # nome de exibição / bundle (override p/ dev bundle)
+BUNDLE_ID="${BUNDLE_ID:-app.harbofly}" # id do bundle (dev bundle usa app.harbofly.dev)
 APP="${APP_NAME}.app"
 BIN=".build/release/Harbofly"         # executável do SwiftPM target (interno)
 ICON="Assets/Harbofly.icns"
@@ -63,7 +64,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
     <key>CFBundleName</key><string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
-    <key>CFBundleIdentifier</key><string>app.harbofly</string>
+    <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key><string>${BUILD}</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundlePackageType</key><string>APPL</string>

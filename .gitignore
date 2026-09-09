@@ -5,6 +5,7 @@ Package.resolved
 
 # App bundle e artefatos de distribuição (gerados)
 /Harbofly.app/
+/Harbofly Dev.app/
 /Harbofly.zip
 /Harbofly.dmg
 
