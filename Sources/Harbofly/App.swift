@@ -124,6 +124,7 @@ struct CleanTarget: Identifiable {
     /// "DerivedData"; o resto usa o nome (genérico) da pasta de cache.
     var category: String {
         if isDocker { return "Docker" }
+        if isGitGC { return "git" }
         if url.path.contains("/Xcode/DerivedData/") { return "DerivedData" }
         return url.lastPathComponent
     }
@@ -138,6 +139,10 @@ struct CleanTarget: Identifiable {
     var unsavedWork = false
     /// Alvo do Docker: a ação é `docker system prune` (irreversível), não Lixeira.
     var isDocker = false
+    /// Alvo de `git gc`: a ação é recompactar o histórico do repo (seguro, não
+    /// perde commits), não Lixeira. `url` é a pasta do projeto (pra rodar `git -C`).
+    /// `bytes` é a estimativa de recuperável; o liberado real é medido no gc.
+    var isGitGC = false
     /// Linha do purgeable quando há snapshots locais do Time Machine: habilita o
     /// botão de thinning (recupera o espaço que o macOS só liberaria sob pressão).
     var canThinSnapshots = false
@@ -182,6 +187,47 @@ struct SimDevice: Identifiable {
 /// Caixa de resultado pro `bounded(_:_:)` transferir o valor da thread de
 /// trabalho pra chamadora (leitura só após a barreira do semáforo).
 private final class ResultBox<T> { var value: T?; init() {} }
+
+/// Roda `/usr/bin/git` e devolve o stdout (nil se o git faltar ou falhar).
+/// Local, sem rede. Função livre (sem `self`) pra ser chamada também de dentro
+/// do closure `[weak self]` do delete().
+private func runGit(_ args: [String]) -> String? {
+    let gitPath = "/usr/bin/git"
+    guard FileManager.default.isExecutableFile(atPath: gitPath) else { return nil }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: gitPath)
+    p.arguments = args
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = Pipe()
+    do { try p.run() } catch { return nil }
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    guard p.terminationStatus == 0 else { return nil }
+    return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// Tamanhos do object store do repo (em BYTES), via `git count-objects -v` —
+/// barato (lê metadados do .git, sem varrer arquivo por arquivo).
+/// `loose` = objetos soltos, `pack` = packs, `garbage` = lixo.
+/// Recuperável por `git gc` ≈ loose + garbage; total em disco ≈ loose+pack+garbage.
+private func gitCountObjects(_ repo: URL) -> (loose: Int64, pack: Int64, garbage: Int64) {
+    guard let out = runGit(["-C", repo.path, "count-objects", "-v"]) else { return (0, 0, 0) }
+    var loose: Int64 = 0, pack: Int64 = 0, garbage: Int64 = 0
+    for line in out.split(whereSeparator: \.isNewline) {
+        let parts = line.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2 else { continue }
+        let key = parts[0].trimmingCharacters(in: .whitespaces)
+        let kb = Int64(parts[1].trimmingCharacters(in: .whitespaces)) ?? 0
+        switch key {
+        case "size": loose = kb * 1024
+        case "size-pack": pack = kb * 1024
+        case "size-garbage": garbage = kb * 1024
+        default: break
+        }
+    }
+    return (loose, pack, garbage)
+}
 
 final class DiskScanner: ObservableObject {
     /// Teto do watchdog do scan: se a varredura não terminar nesse tempo (um
@@ -389,11 +435,24 @@ final class DiskScanner: ObservableObject {
             for item in deletable {
                 var ok = false
                 var gone = false      // path já não existe: benigno, não é falha
+                var itemFreed = item.bytes   // gitGC sobrescreve com o liberado medido
                 if item.isDocker {
                     // Docker não vai pra Lixeira: sempre prune (irreversível),
                     // independente do toggle permanente/Lixeira.
                     ok = DockerEngine.prune()
                     if !ok, firstReason == nil { firstReason = "other" }
+                } else if item.isGitGC {
+                    // `git gc` recompacta o histórico (seguro — não perde commits);
+                    // libera espaço de verdade no disco (não é Lixeira). Mede o
+                    // antes/depois pelo próprio git pra reportar o liberado real.
+                    let before = gitCountObjects(item.url)
+                    ok = runGit(["-C", item.url.path, "gc"]) != nil
+                    if ok {
+                        let after = gitCountObjects(item.url)
+                        let delta = (before.loose + before.pack + before.garbage)
+                                  - (after.loose + after.pack + after.garbage)
+                        itemFreed = max(0, delta)
+                    } else if firstReason == nil { firstReason = "other" }
                 } else {
                     do {
                         if permanently {
@@ -413,9 +472,9 @@ final class DiskScanner: ObservableObject {
                     }
                 }
                 if ok {
-                    freed += item.bytes
+                    freed += itemFreed
                     count += 1
-                    byCategory[item.category, default: 0] += item.bytes
+                    byCategory[item.category, default: 0] += itemFreed
                 } else if !gone {
                     anyFailed = true
                 }
@@ -731,22 +790,7 @@ final class DiskScanner: ObservableObject {
     }
 
     private func checkUnsavedWork(_ dir: URL) -> Bool {
-        let gitPath = "/usr/bin/git"
-        guard FileManager.default.isExecutableFile(atPath: gitPath) else { return false }
-        func git(_ args: [String]) -> String? {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: gitPath)
-            p.arguments = ["-C", dir.path] + args
-            let out = Pipe()
-            p.standardOutput = out
-            p.standardError = Pipe()
-            do { try p.run() } catch { return nil }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit()
-            guard p.terminationStatus == 0 else { return nil }
-            return String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        func git(_ args: [String]) -> String? { runGit(["-C", dir.path] + args) }
         // mudanças não commitadas (ignora untracked: menos ruído, mais rápido)
         if let status = git(["status", "--porcelain", "--untracked-files=no"]), !status.isEmpty {
             return true
@@ -961,7 +1005,8 @@ final class DiskScanner: ObservableObject {
     /// ~/Development. Advisory (info): apagar .git perde história — sugere git gc.
     private func scanGitBloat() -> [CleanTarget] {
         let dev = home.appendingPathComponent("Development")
-        let threshold: Int64 = 1_000_000_000
+        let bloatThreshold: Int64 = 1_000_000_000      // .git ≥ 1 GB = inchado
+        let reclaimThreshold: Int64 = 100_000_000      // ≥ 100 MB recuperável = vale rodar gc
         guard let items = try? FileManager.default.contentsOfDirectory(
             at: dev, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
         ) else { return [] }
@@ -971,11 +1016,26 @@ final class DiskScanner: ObservableObject {
             guard isDir else { continue }
             let objects = proj.appendingPathComponent(".git/objects")
             guard FileManager.default.fileExists(atPath: objects.path) else { continue }
-            let b = size(of: objects)
-            if b >= threshold {
+            // Tamanhos pelo próprio git (metadados, sem varrer arquivo por arquivo).
+            let c = gitCountObjects(proj)
+            let total = c.loose + c.pack + c.garbage
+            guard total >= bloatThreshold else { continue }
+            // Estimativa CONSERVADORA do que o gc realmente libera: `git gc`
+            // EMPACOTA os objetos soltos (não deleta) — só ganha o delta da
+            // compressão. Testado: 9,8MB soltos -> pack de 9,8MB (liberou ~0).
+            // Garbage é removido de fato; soltos rendem ~metade na prática
+            // (fonte comprime bem, binário ~nada). O liberado real é medido no gc.
+            let reclaimable = c.garbage + c.loose / 2
+            if reclaimable >= reclaimThreshold {
+                // Tem o que recompactar: vira AÇÃO segura (roda git gc, não Lixeira).
+                out.append(CleanTarget(url: proj,
+                                       label: "\(proj.lastPathComponent)/.git",
+                                       detailKey: \.gitGC, tier: .safe, bytes: reclaimable, isGitGC: true))
+            } else {
+                // Já está bem empacotado: só informa (revela no Finder), não promete espaço.
                 out.append(CleanTarget(url: proj.appendingPathComponent(".git"),
                                        label: "\(proj.lastPathComponent)/.git",
-                                       detailKey: \.gitBloat, tier: .info, bytes: b))
+                                       detailKey: \.gitBloat, tier: .info, bytes: total))
             }
         }
         return out
@@ -1298,7 +1358,7 @@ final class DiskScanner: ObservableObject {
         let floor = (d.object(forKey: Prefs.autoCleanMinBytes) as? Int) ?? Prefs.autoCleanMinBytesDefault
         let devRoot = home.appendingPathComponent("Development").path
         let eligible = targets.filter { t in
-            guard t.tier == .safe, !t.isDocker else { return false }
+            guard t.tier == .safe, !t.isDocker, !t.isGitGC else { return false }
             let isStaleProject = (t.staleDays ?? 0) >= Prefs.staleThresholdDays
             if t.url.path.hasPrefix(devRoot) {
                 // Artifacts dentro do projeto (node_modules, .build…): só de
@@ -1932,6 +1992,13 @@ struct ContentView: View {
 
                 if selectedTargets.contains(where: { $0.isDocker }) {
                     Text(L10n.dockerPruneNote)
+                        .font(.callout).foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if selectedTargets.contains(where: { $0.isGitGC }) {
+                    Text(L10n.gitGCNote)
                         .font(.callout).foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
