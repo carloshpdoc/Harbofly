@@ -45,6 +45,18 @@ enum CleanLog {
     }
 }
 
+/// Afinidade do usuário por categoria, derivada do histórico local (CleanLog) —
+/// 100% determinístico, offline, sem storage novo. Base das sugestões
+/// personalizadas (ex.: "você já limpou isto N×" no alerta de crescimento).
+enum Affinity {
+    /// Nº de limpezas passadas que incluíram esta categoria. O CleanLog guarda
+    /// as top-5 categorias por limpeza, então é um piso (quem limpa muito dessa
+    /// categoria aparece bastante). Nunca negativo.
+    static func cleanCount(category: String) -> Int {
+        CleanLog.entries().reduce(0) { $0 + ($1.cats[category] != nil ? 1 : 0) }
+    }
+}
+
 /// Snapshots do tamanho da paisagem (categoria -> bytes) ao longo do tempo.
 /// Base da detecção de crescimento: diffar o agora contra um snapshot antigo
 /// revela o que encheu o disco em silêncio (um `~/.git` novo, o `uv` crescendo).

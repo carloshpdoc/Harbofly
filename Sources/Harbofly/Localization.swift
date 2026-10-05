@@ -119,6 +119,13 @@ struct L {
           es: "📈 \(name) creció +\(size) en \(days) días", fr: "📈 \(name) a grossi de +\(size) en \(days) jours",
           de: "📈 \(name) ist in \(days) Tagen um +\(size) gewachsen", zh: "📈 \(name) 在 \(days) 天内增长了 +\(size)", ko: "📈 \(name)이(가) \(days)일 동안 +\(size) 증가함")
     }
+    /// Nota personalizada no alerta de crescimento: você já limpou esta categoria
+    /// N vezes antes → costuma ser seguro. Derivada do histórico local (CleanLog).
+    func growthCleanedBefore(n: Int) -> String {
+        s("Você já limpou isto \(n)× — costuma ser seguro.", "You've cleaned this \(n)× before — usually safe.",
+          es: "Ya limpiaste esto \(n)× — suele ser seguro.", fr: "Vous avez déjà nettoyé ceci \(n)× — généralement sûr.",
+          de: "Das hast du schon \(n)× bereinigt — meist sicher.", zh: "你已清理过这个 \(n) 次——通常是安全的。", ko: "이 항목을 이미 \(n)번 정리했습니다 — 대개 안전합니다.")
+    }
 
     var trashLabel: String { s("Lixeira", "Trash", es: "Papelera", fr: "Corbeille", de: "Papierkorb", zh: "废纸篓", ko: "휴지통") }
     var trashDetail: String { s("Mandar pra Lixeira não libera espaço até esvaziar. Esvazie aqui pra recuperar de verdade — é irreversível.", "Moving to the Trash doesn't free space until you empty it. Empty it here to actually reclaim it — irreversible.", es: "Enviar a la Papelera no libera espacio hasta vaciarla. Vacíala aquí para recuperarlo de verdad — es irreversible.", fr: "Mettre à la Corbeille ne libère pas d'espace tant que vous ne la videz pas. Videz-la ici pour le récupérer vraiment — irréversible.", de: "In den Papierkorb verschieben gibt keinen Speicher frei, bis du ihn leerst. Leere ihn hier, um wirklich Platz zurückzugewinnen — unumkehrbar.", zh: "移到废纸篓不会释放空间，直到清空。在此清空才能真正回收——不可撤销。", ko: "휴지통으로 옮겨도 비우기 전에는 공간이 확보되지 않습니다. 실제로 회수하려면 여기서 비우세요 — 되돌릴 수 없습니다.") }

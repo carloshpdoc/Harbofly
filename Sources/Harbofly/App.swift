@@ -114,11 +114,16 @@ struct CleanTarget: Identifiable {
     /// Descrição como referência (não String): resolvida na render pra
     /// acompanhar a troca de idioma sem precisar de re-scan.
     let detailKey: KeyPath<L, String>
+    /// Detalhe dinâmico (texto já resolvido) que sobrepõe o detailKey quando
+    /// presente — ex.: a nota personalizada do alerta de crescimento. Como já é
+    /// string pronta, não re-localiza na troca de idioma (igual os labels de
+    /// growth, que também são resolvidos no scan).
+    var detailOverride: String? = nil
     let tier: Tier
     var bytes: Int64
 
     var displayLabel: String { labelKey.map { L10n[keyPath: $0] } ?? label }
-    var detail: String { L10n[keyPath: detailKey] }
+    var detail: String { detailOverride ?? L10n[keyPath: detailKey] }
     /// Categoria genérica pra histórico e telemetria — NUNCA nome de projeto.
     /// DerivedData do Xcode é por-projeto (pasta "Projeto-hash"), então força
     /// "DerivedData"; o resto usa o nome (genérico) da pasta de cache.
@@ -237,6 +242,9 @@ final class DiskScanner: ObservableObject {
     /// Teto por scanner de pasta suscetível a wedge (Containers/Application
     /// Support/pastas do usuário). Estourou = abandona aquele scanner e segue.
     private static let folderScanTimeout: TimeInterval = 8
+    /// Nº de limpezas passadas de uma categoria pra considerá-la "hábito" do
+    /// usuário (habilita a nota personalizada no alerta de crescimento).
+    private static let familiarThreshold = 2
     /// Incrementado a cada scan(); identifica o scan corrente pro watchdog e pro
     /// streaming não cruzarem resultados de varreduras diferentes.
     private var scanGeneration = 0
@@ -1183,8 +1191,13 @@ final class DiskScanner: ObservableObject {
                 label = nil
             }
             if let label = label {
+                // Personalização (determinística, offline): se o usuário já
+                // limpou esta categoria várias vezes, o alerta vira acionável e
+                // tranquilizador ("você já limpou isto N× — costuma ser seguro").
+                let cleaned = Affinity.cleanCount(category: cat)
+                let note = cleaned >= Self.familiarThreshold ? L10n.growthCleanedBefore(n: cleaned) : nil
                 out.append(CleanTarget(url: repURL[cat] ?? home, label: label,
-                                       detailKey: \.growthDetail, tier: .info,
+                                       detailKey: \.growthDetail, detailOverride: note, tier: .info,
                                        bytes: base.cats[cat].map { cur - $0 } ?? cur))
             }
         }
