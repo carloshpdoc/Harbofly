@@ -47,6 +47,7 @@ enum CLI {
                 if let d = t.staleDays { row["staleDays"] = d }
                 if t.unsavedWork { row["unsavedWork"] = true }
                 if t.isDocker { row["docker"] = true }
+                if t.isGitGC { row["gitgc"] = true }
                 return row
             }
             let payload: [String: Any] = ["freeBytes": free, "totalBytes": total, "targets": rows]
@@ -75,7 +76,9 @@ enum CLI {
         let targets = scanner.collectAll()
         // Mesma semântica do "Selecionar seguros" do app: só tier 🟢.
         // Docker fica de fora (prune é irreversível — use o app ou o docker).
-        var eligible = targets.filter { $0.tier == .safe && !$0.isDocker }
+        // git gc também fica de fora (a ação é recompactar o repo, não Lixeira —
+        // mandar um repo pra Lixeira seria catastrófico; use o app ou `git gc`).
+        var eligible = targets.filter { $0.tier == .safe && !$0.isDocker && !$0.isGitGC }
         if staleOnly {
             eligible = eligible.filter { ($0.staleDays ?? 0) >= Prefs.staleThresholdDays }
         }
@@ -105,6 +108,9 @@ enum CLI {
                      : "\nMoved \(fmt(freed)) to the Trash (recoverable until you empty it).")
         if targets.contains(where: { $0.isDocker }) {
             print("note: Docker space is skipped in the CLI — use the app or `docker system prune`.")
+        }
+        if targets.contains(where: { $0.isGitGC }) {
+            print("note: bloated git repos are skipped in the CLI — use the app or run `git gc` in the repo.")
         }
         return 0
     }
