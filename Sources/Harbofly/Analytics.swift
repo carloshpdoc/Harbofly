@@ -105,7 +105,8 @@ enum Analytics {
     /// mais comuns/pesados na base e priorizar o roadmap); `freeRatio` = pressão
     /// de disco (quanta dor a base sente).
     static func scanFinished(durationMs: Int, itemCount: Int, recoverableBytes: Int64,
-                             freeRatio: Double, byCategory: [String: Int64]) {
+                             freeRatio: Double, byCategory: [String: Int64],
+                             growthBadges: Int = 0, growthAggregates: Int = 0) {
         guard enabled else { return }
         if configured, !UserDefaults.standard.bool(forKey: Prefs.firstScanSent) {
             UserDefaults.standard.set(true, forKey: Prefs.firstScanSent)
@@ -113,7 +114,10 @@ enum Analytics {
         }
         signal("scan_finished",
                metrics: ["item_count": Double(itemCount), "duration_ms": Double(durationMs),
-                         "free_pct": (freeRatio * 100).rounded()],
+                         "free_pct": (freeRatio * 100).rounded(),
+                         // Avisos de crescimento: selo no próprio item × linha de soma.
+                         "growth_badges": Double(growthBadges),
+                         "growth_aggregates": Double(growthAggregates)],
                floatValue: gb(recoverableBytes))
         // Composição: presença + peso de cada categoria genérica no scan.
         for (category, bytes) in byCategory {
@@ -145,10 +149,11 @@ enum Analytics {
 
     // MARK: auto-clean (item 2)
     /// Usuário mudou a config do auto-clean (ligar/desligar, gatilho, escopo).
-    static func autoCleanConfigured(enabled on: Bool, trigger: String, scope: String) {
+    static func autoCleanConfigured(enabled on: Bool, trigger: String, scope: String, worktrees: Bool) {
         guard enabled else { return }
         signal("autoclean_configured",
-               parameters: ["enabled": on ? "true" : "false", "trigger": trigger, "scope": scope])
+               parameters: ["enabled": on ? "true" : "false", "trigger": trigger, "scope": scope,
+                            "worktrees": worktrees ? "true" : "false"])
     }
     /// O auto-clean disparou de verdade — quanto entregou e em que contexto.
     static func autoCleanRan(trigger: String, scope: String, freedBytes: Int64, itemCount: Int) {
@@ -157,6 +162,98 @@ enum Analytics {
                parameters: ["trigger": trigger, "scope": scope],
                metrics: ["item_count": Double(itemCount)],
                floatValue: gb(freedBytes))
+    }
+
+    // MARK: worktrees (1.16) — só contagens e GB; nunca repo, branch ou caminho.
+
+    private static var worktreesSeenSent = false
+    /// Paisagem de worktrees, 1x por sessão: o problema existe e em que escala?
+    /// `agent` = criadas por agente (pasta `.claude/worktrees`), proxy do uso de
+    /// agentes de código — a origem provável do acúmulo.
+    static func worktreesSeen(total: Int, removable: Int, locked: Int, dirty: Int, detached: Int,
+                              orphanRepos: Int, idle: Int, agent: Int,
+                              bytes: Int64, removableBytes: Int64) {
+        guard enabled, started, !worktreesSeenSent, total + orphanRepos > 0 else { return }
+        worktreesSeenSent = true
+        signal("worktrees_seen",
+               metrics: ["total": Double(total), "removable": Double(removable), "locked": Double(locked),
+                         "dirty": Double(dirty), "detached": Double(detached),
+                         "orphan_repos": Double(orphanRepos), "idle": Double(idle), "agent": Double(agent),
+                         "removable_gb": gb(removableBytes)],
+               floatValue: gb(bytes))
+    }
+
+    /// Lembrete clicado nesta sessão: a próxima remoção manual conta como
+    /// vinda do lembrete (fecha o funil enviado → aberto → removido).
+    private static var reminderOpenedThisSession = false
+
+    /// `action`: "sent" | "opened".
+    static func worktreeReminder(_ action: String, count: Int = 0, idleDays: Int = 0, bytes: Int64 = 0) {
+        if action == "opened" { reminderOpenedThisSession = true }
+        guard enabled else { return }
+        signal("worktree_reminder", parameters: ["action": action],
+               metrics: ["count": Double(count), "idle_days": Double(idleDays)],
+               floatValue: gb(bytes))
+    }
+
+    /// Resultado de uma remoção. `source`: "manual" | "auto" (vira "reminder"
+    /// quando o lembrete foi aberto na sessão). Recusas do git por motivo
+    /// genérico: travada, com mudanças ou outro — nunca o texto do git.
+    static func worktreesRemoved(source: String, ok: Int, refusedLocked: Int, refusedDirty: Int,
+                                 refusedOther: Int, pruned: Int, freedBytes: Int64) {
+        guard enabled, ok + refusedLocked + refusedDirty + refusedOther + pruned > 0 else { return }
+        let src = (source == "manual" && reminderOpenedThisSession) ? "reminder" : source
+        signal("worktrees_removed", parameters: ["origin": src],
+               metrics: ["ok": Double(ok), "refused_locked": Double(refusedLocked),
+                         "refused_dirty": Double(refusedDirty), "refused_other": Double(refusedOther),
+                         "pruned": Double(pruned)],
+               floatValue: gb(freedBytes))
+    }
+
+    // MARK: runtimes de simulador (1.16)
+
+    private static var runtimesSeenSent = false
+    /// Espaço que fica FORA da pasta CoreSimulator, 1x por sessão (ao abrir o painel).
+    static func simRuntimesSeen(count: Int, neverUsed: Int, deletable: Int, bytes: Int64, neverUsedBytes: Int64) {
+        guard enabled, started, !runtimesSeenSent, count > 0 else { return }
+        runtimesSeenSent = true
+        signal("sim_runtimes_seen",
+               metrics: ["count": Double(count), "never_used": Double(neverUsed),
+                         "deletable": Double(deletable), "never_used_gb": gb(neverUsedBytes)],
+               floatValue: gb(bytes))
+    }
+
+    static func runtimesDeleted(ok: Int, failed: Int, neverUsed: Int, freedBytes: Int64) {
+        guard enabled else { return }
+        signal("runtimes_deleted",
+               metrics: ["ok": Double(ok), "failed": Double(failed), "never_used": Double(neverUsed)],
+               floatValue: gb(freedBytes))
+    }
+
+    // MARK: personalização da lista (1.16)
+
+    private static var uiPrefsSent = false
+    /// Estado das preferências, 1x por sessão: mede a PREVALÊNCIA (quantos
+    /// usam a lista personalizada), não só quem mexeu nesta sessão.
+    static func uiPrefs(tierOrder: String, collapsed: String,
+                        reminder: Bool, idleDays: Int, autoWorktrees: Bool) {
+        guard enabled, started, !uiPrefsSent else { return }
+        uiPrefsSent = true
+        signal("ui_prefs",
+               parameters: ["tier_order": tierOrder,
+                            "collapsed": collapsed.isEmpty ? "none" : collapsed,
+                            "wt_reminder": reminder ? "on" : "off",
+                            "auto_worktrees": autoWorktrees ? "on" : "off"],
+               metrics: ["idle_days": Double(idleDays)])
+    }
+
+    /// Uma mudança na lista. `kind`: "collapse" | "expand" | "reorder" | "sort" |
+    /// "wt_reminder" | "idle_days". `method` só pro reorder: "drag" | "menu".
+    static func uiChanged(kind: String, value: String, method: String? = nil) {
+        guard enabled else { return }
+        var params = ["kind": kind, "choice": value]
+        if let method { params["method"] = method }
+        signal("ui_changed", parameters: params)
     }
 
     // MARK: duplicatas (item 3)

@@ -123,14 +123,20 @@ harbofly version
       "bytes": 0,
       "staleDays": 120,
       "unsavedWork": true,
-      "docker": true
+      "docker": true,
+      "gitgc": true,
+      "worktree": true,
+      "pending": "New file: .probe/"
     }
   ]
 }
 ```
 
-`tier` is `safe` | `caution` | `info`. `staleDays`, `unsavedWork`, and `docker`
-are present only when relevant.
+`tier` is `safe` | `caution` | `info`. `staleDays`, `unsavedWork`, `docker`,
+`gitgc`, `worktree`, and `pending` are present only when relevant. `worktree`
+marks a git worktree (🟡 when removable with `git worktree remove`, ℹ️ when
+locked or holding pending files); `pending` says what blocks its removal.
+The CLI never removes worktrees: `clean` only touches 🟢.
 
 `harbofly dups --json`:
 

@@ -80,7 +80,8 @@ harbofly version
 ```
 
 `scan --json` → `{ freeBytes, totalBytes, targets: [{ label, path, tier:
-"safe"|"caution"|"info", bytes, staleDays?, unsavedWork?, docker? }] }`
+"safe"|"caution"|"info", bytes, staleDays?, unsavedWork?, docker?, gitgc?,
+worktree?, pending? }] }`
 
 `dups --json` → `{ reclaimableBytes, groups: [{ hash, size, reclaimable,
 keeper, duplicates: [paths] }] }`

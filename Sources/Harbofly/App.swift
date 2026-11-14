@@ -93,6 +93,22 @@ enum Prefs {
     /// mostraram que a maioria limpa 1-2x e nunca gatilhava a oferta (só 8 de
     /// 22 usuários a viam) — baixado pra 2 pra ampliar a descoberta.
     static let autoOfferThreshold = 2
+    /// Tiers recolhidos na lista do cleaner (chaves `Tier.key` separadas por vírgula).
+    static let collapsedTiers = "collapsedTiers"
+    /// Ordem das seções do cleaner (chaves `Tier.key` separadas por vírgula).
+    static let tierOrder = "tierOrder"
+    /// Worktree "parada" = removível e sem nenhum arquivo tocado há N dias.
+    /// Vale pro lembrete e pra remoção automática.
+    static let worktreeIdleDays = "worktreeIdleDays"
+    static let worktreeIdleDaysDefault = 1
+    /// Lembrete de worktrees paradas (ligado por padrão; no máx 1x por semana).
+    static let worktreeReminderEnabled = "worktreeReminderEnabled"
+    static let worktreeReminderLastTs = "worktreeReminderLastTs"
+    static let worktreeReminderInterval = 604_800.0
+    /// Só lembra se as paradas somam pelo menos isso (não incomoda por pouco).
+    static let worktreeReminderMinBytes: Int64 = 1_000_000_000
+    /// Remoção automática de worktrees paradas dentro do auto-clean (opt-in).
+    static let autoCleanWorktrees = "autoCleanWorktrees"
 }
 
 // MARK: - Model
@@ -104,7 +120,19 @@ enum Tier: String {
 
     /// Tier informativo: mostrado só pra ciência, o app nunca apaga.
     var isReadOnly: Bool { self == .info }
+
+    /// Chave estável (não localizada) pra persistir o estado recolhido.
+    var key: String {
+        switch self {
+        case .safe: return "safe"
+        case .caution: return "caution"
+        case .info: return "info"
+        }
+    }
 }
+
+/// Ordenação da lista do cleaner (aplicada dentro de cada tier).
+enum CleanerSort: CaseIterable { case size, oldest, name }
 
 struct CleanTarget: Identifiable {
     let id = UUID()
@@ -126,6 +154,13 @@ struct CleanTarget: Identifiable {
     var bytes: Int64
 
     var displayLabel: String { labelKey.map { L10n[keyPath: $0] } ?? label }
+    /// Worktree que o app pode remover (🟡): não travada, com branch, sem mudanças.
+    var isRemovableWorktree: Bool { isWorktree && tier == .caution && !worktreePrune }
+    /// Removível E sem nenhum arquivo tocado há `days` dias (sem medida = não é parada).
+    func isIdleWorktree(days: Int, now: Date = Date()) -> Bool {
+        guard isRemovableWorktree, let m = lastModified else { return false }
+        return now.timeIntervalSince(m) >= Double(days) * 86_400
+    }
     var detail: String { detailOverride ?? L10n[keyPath: detailKey] }
     /// Categoria genérica pra histórico e telemetria — NUNCA nome de projeto.
     /// DerivedData do Xcode é por-projeto (pasta "Projeto-hash"), então força
@@ -133,6 +168,8 @@ struct CleanTarget: Identifiable {
     var category: String {
         if isDocker { return "Docker" }
         if isGitGC { return "git" }
+        // O nome da pasta de uma worktree costuma ser o da branch: nunca vai pra telemetria.
+        if isWorktree { return "worktree" }
         if url.path.contains("/Xcode/DerivedData/") { return "DerivedData" }
         return url.lastPathComponent
     }
@@ -151,6 +188,23 @@ struct CleanTarget: Identifiable {
     /// perde commits), não Lixeira. `url` é a pasta do projeto (pra rodar `git -C`).
     /// `bytes` é a estimativa de recuperável; o liberado real é medido no gc.
     var isGitGC = false
+    /// Worktree git ligada a um repo (`git worktree add`): só informa, o app não
+    /// apaga — remover é `git worktree remove`, que recusa se houver mudanças.
+    var isWorktree = false
+    /// Repo principal da worktree (onde roda `git -C <repo> worktree …`).
+    var worktreeRepo: URL? = nil
+    /// Branch da worktree (pro comando de desfazer: `git worktree add <pasta> <branch>`).
+    var worktreeBranch: String? = nil
+    /// Commits da worktree que não estão em nenhum remote (nil = não medido).
+    /// Remover a worktree não os perde: a branch fica no repo.
+    var worktreeLocalCommits: Int? = nil
+    /// Linha de registros órfãos (pasta já apagada): a ação é `git worktree prune`.
+    var worktreePrune = false
+    /// O que impede a remoção, já em texto (ex.: "Arquivo novo: .probe/ (+2)").
+    var worktreePending: String? = nil
+    /// Selo de crescimento no próprio item ("📈 Cresceu +8 GB em 16 dias"), em
+    /// vez de uma linha separada pra mesma pasta.
+    var growthNote: String? = nil
     /// Linha do purgeable quando há snapshots locais do Time Machine: habilita o
     /// botão de thinning (recupera o espaço que o macOS só liberaria sob pressão).
     var canThinSnapshots = false
@@ -190,6 +244,18 @@ struct SimDevice: Identifiable {
     let booted: Bool
 }
 
+/// Um runtime de simulador (imagem de disco do iOS/watchOS…). Fica FORA de
+/// ~/Library/Developer/CoreSimulator, então não entra no tamanho daquela linha.
+struct SimRuntime: Identifiable {
+    let id: String          // identificador da imagem (o que `simctl runtime delete` recebe)
+    let name: String        // "iOS 27.2" ou "iOS 27.2 (iPhone19,4)" pra variante de hardware
+    let bytes: Int64
+    let lastUsed: Date?     // nil = nunca usado
+    let deletable: Bool     // o simctl diz se dá pra apagar (os que vêm com o Xcode, não)
+    let deviceCount: Int    // simuladores que dependem dele (ficam inutilizáveis se apagar)
+    let inUse: Bool         // algum simulador dele está ligado agora
+}
+
 // MARK: - Scanner
 
 /// Caixa de resultado pro `bounded(_:_:)` transferir o valor da thread de
@@ -213,6 +279,32 @@ private func runGit(_ args: [String]) -> String? {
     p.waitUntilExit()
     guard p.terminationStatus == 0 else { return nil }
     return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// Como `runGit`, mas devolve também o stderr: pra mostrar ao usuário o motivo
+/// exato quando o git recusa algo (ex.: `worktree remove` numa worktree com mudanças).
+private func runGitResult(_ args: [String]) -> (ok: Bool, out: String, err: String) {
+    let gitPath = "/usr/bin/git"
+    guard FileManager.default.isExecutableFile(atPath: gitPath) else { return (false, "", "git not found") }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: gitPath)
+    p.arguments = args
+    let out = Pipe(), err = Pipe()
+    p.standardOutput = out
+    p.standardError = err
+    do { try p.run() } catch { return (false, "", error.localizedDescription) }
+    let o = out.fileHandleForReading.readDataToEndOfFile()
+    let e = err.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    func str(_ d: Data) -> String {
+        (String(data: d, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return (p.terminationStatus == 0, str(o), str(e))
+}
+
+/// Aspas simples de shell (o comando de desfazer é colado no Terminal).
+func shellQuote(_ s: String) -> String {
+    "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
 
 /// Tamanhos do object store do repo (em BYTES), via `git count-objects -v` —
@@ -276,6 +368,9 @@ final class DiskScanner: ObservableObject {
     @Published var lastFreedBytes: Int64 = 0
     @Published var lastDeletePermanent = false
     @Published var justCleaned = false
+    /// Comandos `git worktree add` pra desfazer a última remoção de worktrees
+    /// (mostrados numa faixa até o usuário fechar).
+    @Published var worktreeUndo: [String] = []
     @Published var deleting = false
     @Published var deletingDone = 0
     @Published var deletingTotal = 0
@@ -288,6 +383,10 @@ final class DiskScanner: ObservableObject {
     @Published var simulators: [SimDevice] = []
     /// Nº de simuladores apagados na última deleção seletiva (nil = não rodou).
     @Published var simSpecificDeleteDone: Int?
+    /// Runtimes de simulador (imagens), pra deleção seletiva na UI.
+    @Published var simRuntimes: [SimRuntime] = []
+    /// Resultado da última deleção seletiva de runtimes (nil = não rodou).
+    @Published var runtimeSpecificDeleteDone: (ok: Int, failed: Int, reason: String?)?
     /// Bytes liberados no último "esvaziar Lixeira" (nil = não rodou).
     @Published var trashEmptiedBytes: Int64?
     /// Nº de alertas de crescimento no último scan — badge do vigia no menu-bar.
@@ -325,6 +424,7 @@ final class DiskScanner: ObservableObject {
         }
         autoCleanTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
             self?.autoCleanIfDue(fromXcodeQuit: false)
+            self?.worktreeReminderIfDue()
         }
         // Checagem inicial (ex.: agendamento semanal vencido com o Mac desligado),
         // com folga pra não competir com o scan de abertura.
@@ -402,11 +502,16 @@ final class DiskScanner: ObservableObject {
                 guard self.scanGeneration == gen else { return }
                 self.freeBytes = free
                 self.totalBytes = total
-                self.targets = growth + found
-                self.growthCount = growth.count
+                var merged = found
+                for i in merged.indices {
+                    if let note = growth.notes[merged[i].url.path] { merged[i].growthNote = note }
+                }
+                self.targets = growth.standalone + merged
+                self.growthCount = growth.standalone.count + growth.notes.count
                 self.lastScan = Date()
                 self.scanning = false
                 self.checkLowSpaceNotification()
+                self.checkWorktreeReminder()
                 let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
                 let cleanable = found.filter { !$0.tier.isReadOnly }
                 let recoverable = cleanable.reduce(Int64(0)) { $0 + $1.bytes }
@@ -417,7 +522,11 @@ final class DiskScanner: ObservableObject {
                 let freeRatio = total > 0 ? Double(free) / Double(total) : 1
                 Analytics.scanFinished(durationMs: ms, itemCount: found.count,
                                        recoverableBytes: recoverable,
-                                       freeRatio: freeRatio, byCategory: byCategory)
+                                       freeRatio: freeRatio, byCategory: byCategory,
+                                       growthBadges: growth.notes.count,
+                                       growthAggregates: growth.standalone.count)
+                self.reportWorktreeLandscape()
+                self.reportUIPrefs()
                 if self.pendingAutoClean {
                     self.pendingAutoClean = false
                     self.performAutoClean()
@@ -430,7 +539,8 @@ final class DiskScanner: ObservableObject {
     /// (recuperável, mas o espaço só é liberado ao esvaziar a Lixeira);
     /// `true` remove de vez, liberando o espaço na hora.
     /// Itens read-only (tier informativo) são ignorados por segurança.
-    func delete(_ items: [CleanTarget], permanently: Bool) {
+    /// `source` ("manual" | "auto") só alimenta o analytics de worktrees.
+    func delete(_ items: [CleanTarget], permanently: Bool, source: String = "manual") {
         let deletable = items.filter { !$0.tier.isReadOnly }
         guard !deletable.isEmpty else { return }
         deleting = true
@@ -443,10 +553,16 @@ final class DiskScanner: ObservableObject {
             var firstReason: String? = nil
             // Bytes liberados por tipo genérico de cache (nunca o caminho/nome real).
             var byCategory: [String: Int64] = [:]
+            // Comandos pra trazer de volta as worktrees removidas (a branch fica no repo).
+            var undo: [String] = []
+            // Analytics de worktrees: resultado por motivo genérico (nunca o texto do git).
+            var wtOK = 0, wtLocked = 0, wtDirty = 0, wtOther = 0, wtPruned = 0
+            var wtFreed: Int64 = 0
             for item in deletable {
                 var ok = false
                 var gone = false      // path já não existe: benigno, não é falha
                 var itemFreed = item.bytes   // gitGC sobrescreve com o liberado medido
+                var refusal: String? = nil   // motivo que o git deu ao recusar (worktree)
                 if item.isDocker {
                     // Docker não vai pra Lixeira: sempre prune (irreversível),
                     // independente do toggle permanente/Lixeira.
@@ -464,6 +580,41 @@ final class DiskScanner: ObservableObject {
                                   - (after.loose + after.pack + after.garbage)
                         itemFreed = max(0, delta)
                     } else if firstReason == nil { firstReason = "other" }
+                } else if item.isWorktree, let repo = item.worktreeRepo {
+                    // Worktree não vai pra Lixeira: quem remove é o git, SEM --force.
+                    // Ele mesmo recusa, na hora da remoção, worktree travada ou com
+                    // qualquer mudança/arquivo novo — sem janela de corrida com o scan.
+                    if item.worktreePrune {
+                        // Só registros cuja pasta já sumiu: limpa metadado, 0 byte.
+                        let r = runGitResult(["-C", repo.path, "worktree", "prune"])
+                        ok = r.ok
+                        itemFreed = 0
+                        if !ok { refusal = r.err }
+                    } else {
+                        let r = runGitResult(["-C", repo.path, "worktree", "remove", item.url.path])
+                        // Prova é a pasta ter sumido, não só o exit code.
+                        if r.ok && !FileManager.default.fileExists(atPath: item.url.path) {
+                            ok = true
+                            if let branch = item.worktreeBranch {
+                                undo.append("git -C \(shellQuote(repo.path)) worktree add "
+                                            + "\(shellQuote(item.url.path)) \(shellQuote(branch))")
+                            }
+                        } else {
+                            refusal = r.ok ? L10n.worktreeStillThere : r.err
+                        }
+                    }
+                    if !ok, firstReason == nil { firstReason = "other" }
+                    if item.worktreePrune {
+                        if ok { wtPruned += 1 } else { wtOther += 1 }
+                    } else if ok {
+                        wtOK += 1
+                        wtFreed += itemFreed
+                    } else {
+                        let r = (refusal ?? "").lowercased()
+                        if r.contains("locked") { wtLocked += 1 }
+                        else if r.contains("modified") || r.contains("untracked") { wtDirty += 1 }
+                        else { wtOther += 1 }
+                    }
                 } else {
                     do {
                         if permanently {
@@ -492,15 +643,27 @@ final class DiskScanner: ObservableObject {
                 // Feedback imediato: some da lista assim que o item vai pra Lixeira
                 // (ou se já tinha sumido), sem esperar o rescan completo do final.
                 let drop = ok || gone
+                let why = refusal
                 DispatchQueue.main.async {
                     self?.deletingDone += 1
                     if drop { self?.targets.removeAll { $0.id == item.id } }
+                    // Recusa do git: a linha fica, com o motivo no lugar da descrição.
+                    if let why, let i = self?.targets.firstIndex(where: { $0.id == item.id }) {
+                        var first = why.split(whereSeparator: \.isNewline).first.map(String.init) ?? why
+                        if first.hasPrefix("fatal: ") { first.removeFirst("fatal: ".count) }
+                        self?.targets[i].detailOverride = L10n.worktreeRefused(first)
+                    }
                 }
             }
             let freedFinal = freed, countFinal = count, categories = byCategory
+            let undoFinal = undo
+            let wt = (wtOK, wtLocked, wtDirty, wtOther, wtPruned, wtFreed)
             let failed = anyFailed, failReason = firstReason
             DispatchQueue.main.async {
                 CleanLog.record(bytes: freedFinal, count: countFinal, byCategory: categories)
+                if !undoFinal.isEmpty { self?.worktreeUndo = undoFinal }
+                Analytics.worktreesRemoved(source: source, ok: wt.0, refusedLocked: wt.1, refusedDirty: wt.2,
+                                           refusedOther: wt.3, pruned: wt.4, freedBytes: wt.5)
                 self?.lastFreedBytes = freedFinal
                 self?.lastDeletePermanent = permanently
                 self?.justCleaned = true
@@ -576,6 +739,7 @@ final class DiskScanner: ObservableObject {
         run(scanDevelopment); run(scanDerivedData); run(scanLibrary)
         run(scanDocker); run(scanCacheHome); run(scanStrayGit)
         run(scanDeviceSupportVersions); run(scanOrphanedLeftovers); run(scanGitBloat)
+        run(scanWorktrees)
         run(scanTrash); run(scanVMDisks); run(scanUnrecognizedCaches)
         runBounded(scanOrphanedAppData); runBounded(scanInfo); runBounded(scanBigFiles)
         // Dedupe por path: scanners podem se sobrepor (ex.: órfão curado vs
@@ -1052,6 +1216,101 @@ final class DiskScanner: ObservableObject {
         return out
     }
 
+    /// Worktrees git ligadas a repos sob ~/Development, incluindo as que agentes
+    /// criam em `.claude/worktrees`. Cada uma é um checkout inteiro (dá GBs) e
+    /// costuma ficar esquecida.
+    /// Só vira ação (🟡, `git worktree remove` sem --force) quando é seguro:
+    /// não travada, com branch e `git status` vazio (inclusive arquivos novos).
+    /// O resto fica informativo, com o motivo.
+    private func scanWorktrees() -> [CleanTarget] {
+        let dev = home.appendingPathComponent("Development")
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: dev, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        ) else { return [] }
+        struct Linked { let url: URL; let repo: URL; let branch: String?; let locked: Bool }
+        var linked: [Linked] = []
+        var orphans: [(repo: URL, count: Int)] = []
+        for repo in items {
+            // Só repo com worktree ligada tem .git/worktrees: pré-checagem barata
+            // antes de pagar um processo git por repo.
+            guard FileManager.default.fileExists(atPath: repo.appendingPathComponent(".git/worktrees").path),
+                  let out = runGit(["-C", repo.path, "worktree", "list", "--porcelain"]) else { continue }
+            var prunable = 0
+            // Blocos separados por linha em branco; o 1º é sempre o checkout principal.
+            for block in out.components(separatedBy: "\n\n").dropFirst() {
+                var path: String?, branch: String?, locked = false, isPrunable = false
+                for line in block.split(whereSeparator: \.isNewline) {
+                    if line.hasPrefix("worktree ") { path = String(line.dropFirst("worktree ".count)) }
+                    else if line.hasPrefix("branch ") {
+                        branch = String(line.dropFirst("branch ".count))
+                            .replacingOccurrences(of: "refs/heads/", with: "")
+                    }
+                    else if line.hasPrefix("locked") { locked = true }
+                    else if line.hasPrefix("prunable") { isPrunable = true }
+                }
+                // prunable = a pasta já não existe: sobra só o registro (0 byte).
+                if isPrunable { prunable += 1; continue }
+                guard let path, FileManager.default.fileExists(atPath: path) else { continue }
+                linked.append(Linked(url: URL(fileURLWithPath: path), repo: repo, branch: branch, locked: locked))
+            }
+            if prunable > 0 { orphans.append((repo, prunable)) }
+        }
+        // Dimensionar é o caro (cada worktree é um checkout com milhares de
+        // arquivos): em paralelo, um índice por iteração, sem lock.
+        let toSize = linked
+        var sized = [CleanTarget?](repeating: nil, count: toSize.count)
+        sized.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: toSize.count) { i in
+                let w = toSize[i]
+                var newest: Date? = nil
+                let b = size(of: w.url, newest: &newest)
+                guard b > minBytes else { return }
+                buf[i] = classifyWorktree(w.url, repo: w.repo, branch: w.branch, locked: w.locked,
+                                          bytes: b, newest: newest)
+            }
+        }
+        var out = sized.compactMap { $0 }
+        for o in orphans {
+            out.append(CleanTarget(url: o.repo,
+                                   label: L10n.worktreeOrphansLabel(repo: o.repo.lastPathComponent, n: o.count),
+                                   detailKey: \.worktreePruneDetail, tier: .caution, bytes: 0,
+                                   isWorktree: true, worktreeRepo: o.repo, worktreePrune: true))
+        }
+        return out
+    }
+
+    /// Decide se a worktree vira ação (🟡) ou fica informativa, com o motivo.
+    private func classifyWorktree(_ wt: URL, repo: URL, branch: String?, locked: Bool,
+                                  bytes: Int64, newest: Date?) -> CleanTarget {
+        let label = "\(repo.lastPathComponent) ⎇ \(branch ?? "HEAD")"
+        let local = runGit(["-C", wt.path, "rev-list", "--count", "HEAD", "--not", "--remotes"])
+            .flatMap { Int($0) }
+        func info(_ key: KeyPath<L, String>, unsaved: Bool = false, pending: String? = nil) -> CleanTarget {
+            CleanTarget(url: wt, label: label, detailKey: key, tier: .info, bytes: bytes,
+                        lastModified: newest, unsavedWork: unsaved, isWorktree: true,
+                        worktreeLocalCommits: local, worktreePending: pending)
+        }
+        if locked { return info(\.worktreeLocked) }
+        // HEAD solto: commits feitos aqui não estão em branch nenhuma e poderiam
+        // se perder ao remover. Não oferece.
+        guard let branch else { return info(\.worktreeDetached) }
+        // Inclui arquivos novos: o `git worktree remove` também recusa por eles.
+        let status = runGitResult(["-C", wt.path, "status", "--porcelain"])
+        guard status.ok else { return info(\.worktreeUnknown) }
+        guard status.out.isEmpty else {
+            // Mostra o que trava: 1º item do `git status` (+ quantos mais).
+            let lines = status.out.split(whereSeparator: \.isNewline)
+            let first = lines.first.map(String.init) ?? ""
+            let isNew = first.hasPrefix("??")
+            let path = first.count > 3 ? String(first.dropFirst(3)) : first
+            return info(\.worktreeDirty, unsaved: true,
+                        pending: L10n.worktreePending(path, isNew: isNew, more: lines.count - 1))
+        }
+        return CleanTarget(url: wt, label: label, detailKey: \.worktreeRemovable, tier: .caution,
+                           bytes: bytes, lastModified: newest, isWorktree: true,
+                           worktreeRepo: repo, worktreeBranch: branch, worktreeLocalCommits: local)
+    }
+
     /// Maiores arquivos INDIVIDUAIS (não pastas) nas pastas de usuário — o culpado
     /// costuma ser UM arquivo (um .mp4, um .dmg), não a pasta. Tier info: o app não
     /// apaga arquivo pessoal, só revela no Finder.
@@ -1170,21 +1429,31 @@ final class DiskScanner: ObservableObject {
     /// 🥇 Detecção de crescimento: compara a paisagem atual (por categoria) com o
     /// snapshot mais antigo (≥1 dia) e avisa o que APARECEU grande ou CRESCEU — o
     /// que enche o disco em silêncio. Grava o snapshot novo a cada passada.
-    private func growthAlerts(from found: [CleanTarget]) -> [CleanTarget] {
+    /// Categoria com UM item: o aviso vira selo nesse item (`notes`, por caminho),
+    /// em vez de uma 2ª linha pra mesma pasta. Categoria com VÁRIOS itens
+    /// (DerivedData por projeto, worktrees): não há uma linha que represente a
+    /// soma, então o aviso fica numa linha própria (`standalone`) que diz isso.
+    private func growthAlerts(from found: [CleanTarget]) -> (standalone: [CleanTarget], notes: [String: String]) {
         let now = Date().timeIntervalSince1970
         var current: [String: Int64] = [:]
         var repURL: [String: URL] = [:]
         var repBytes: [String: Int64] = [:]
+        var itemCount: [String: Int] = [:]
         for t in found {
             current[t.category, default: 0] += t.bytes
+            itemCount[t.category, default: 0] += 1
             if t.bytes > (repBytes[t.category] ?? 0) { repBytes[t.category] = t.bytes; repURL[t.category] = t.url }
         }
         defer { SizeLog.record(current, now: now) }
-        guard let base = SizeLog.baseline(now: now, minAgeDays: 1) else { return [] }
+        guard let base = SizeLog.baseline(now: now, minAgeDays: 1) else { return ([], [:]) }
         let days = max(1, Int((now - base.ts) / 86_400))
         let newBig: Int64 = 3_000_000_000, grew: Int64 = 3_000_000_000
         var out: [CleanTarget] = []
+        var notes: [String: String] = [:]
         for (cat, cur) in current where cur >= minBytes {
+            // Categoria que a medição de referência ainda não sabia medir: não é
+            // crescimento, é o app enxergando algo pela 1ª vez. Sem alerta.
+            if SizeLog.versionedCategories.contains(cat) && !base.measures.contains(cat) { continue }
             let label: String?
             if base.cats[cat] == nil {
                 label = cur >= newBig ? L10n.growthNew(name: cat, size: fmt(cur)) : nil
@@ -1199,12 +1468,23 @@ final class DiskScanner: ObservableObject {
                 // tranquilizador ("você já limpou isto N× — costuma ser seguro").
                 let cleaned = Affinity.cleanCount(category: cat)
                 let note = cleaned >= Self.familiarThreshold ? L10n.growthCleanedBefore(n: cleaned) : nil
-                out.append(CleanTarget(url: repURL[cat] ?? home, label: label,
-                                       detailKey: \.growthDetail, detailOverride: note, tier: .info,
-                                       bytes: base.cats[cat].map { cur - $0 } ?? cur))
+                let n = itemCount[cat] ?? 0
+                if n == 1, let url = repURL[cat] {
+                    // Um item só: selo nele, com o tamanho real continuando na linha.
+                    let badge = base.cats[cat].map { L10n.growthBadgeGrew(size: fmt(cur - $0), days: days) }
+                        ?? L10n.growthBadgeNew
+                    notes[url.path] = [badge, note].compactMap { $0 }.joined(separator: " ")
+                } else {
+                    // Soma de vários itens: linha própria, dizendo que é a soma.
+                    let across = L10n.growthAcross(n: n, total: fmt(cur))
+                    out.append(CleanTarget(url: repURL[cat] ?? home, label: label,
+                                           detailKey: \.growthDetail,
+                                           detailOverride: [across, note].compactMap { $0 }.joined(separator: " "),
+                                           tier: .info, bytes: base.cats[cat].map { cur - $0 } ?? cur))
+                }
             }
         }
-        return out.sorted { $0.bytes > $1.bytes }
+        return (out.sorted { $0.bytes > $1.bytes }, notes)
     }
 
     /// Tier informativo (só leitura): pastas grandes que o app NÃO apaga, mas
@@ -1368,13 +1648,14 @@ final class DiskScanner: ObservableObject {
     /// só 🟢 seguros; artifacts de ~/Development só no escopo "all" e ainda
     /// assim apenas de projetos parados 90+ dias (projeto ativo nunca);
     /// SEMPRE Lixeira (ignora o toggle permanente); e só acima do piso.
+    /// Exceção opt-in: worktrees paradas (regras próprias abaixo).
     private func performAutoClean() {
         let d = UserDefaults.standard
         let scope = d.string(forKey: Prefs.autoCleanScope) ?? "all"
         let floor = (d.object(forKey: Prefs.autoCleanMinBytes) as? Int) ?? Prefs.autoCleanMinBytesDefault
         let devRoot = home.appendingPathComponent("Development").path
-        let eligible = targets.filter { t in
-            guard t.tier == .safe, !t.isDocker, !t.isGitGC else { return false }
+        let cleanable = targets.filter { t in
+            guard t.tier == .safe, !t.isDocker, !t.isGitGC, !t.isWorktree else { return false }
             let isStaleProject = (t.staleDays ?? 0) >= Prefs.staleThresholdDays
             if t.url.path.hasPrefix(devRoot) {
                 // Artifacts dentro do projeto (node_modules, .build…): só de
@@ -1387,6 +1668,18 @@ final class DiskScanner: ObservableObject {
             }
             return true // caches de ferramentas: re-baixam sob demanda
         }
+        // Worktrees: só com o opt-in próprio, e mais duro que o manual — parada
+        // há N dias E branch inteira no remoto (nenhum commit só local). Sai pelo
+        // `git worktree remove` sem --force (não Lixeira); a branch fica no repo.
+        // Os registros órfãos (pasta já apagada) vão junto: só metadado.
+        let days = worktreeIdleDays
+        let worktrees = d.bool(forKey: Prefs.autoCleanWorktrees)
+            ? targets.filter { t in
+                guard t.isWorktree, t.tier == .caution else { return false }
+                return t.worktreePrune || (t.isIdleWorktree(days: days) && t.worktreeLocalCommits == 0)
+            }
+            : []
+        let eligible = cleanable + worktrees
         let total = eligible.reduce(Int64(0)) { $0 + $1.bytes }
         d.set(Date().timeIntervalSince1970, forKey: Prefs.autoCleanLastRun)
         guard total >= Int64(floor) else { return }
@@ -1405,7 +1698,7 @@ final class DiskScanner: ObservableObject {
         Analytics.autoCleanRan(trigger: d.string(forKey: Prefs.autoCleanTrigger) ?? "daily",
                                scope: scope, freedBytes: total, itemCount: eligible.count)
         notifyAutoClean(freed: total, count: eligible.count)
-        delete(eligible, permanently: false)
+        delete(eligible, permanently: false, source: "auto")
     }
 
     private func notifyAutoClean(freed: Int64, count: Int) {
@@ -1500,12 +1793,134 @@ final class DiskScanner: ObservableObject {
         return text.split(separator: "\n").filter { $0.contains("—") || $0.contains(" (") || $0.contains("iOS") || $0.contains("watchOS") || $0.contains("tvOS") }.count
     }
 
-    /// Lista os simuladores disponíveis com nome, runtime e tamanho da pasta
-    /// Devices/<UDID>. Assíncrono; publica em `simulators` pra sub-lista da UI.
+    /// Lista simuladores e runtimes pro painel da UI. Assíncrono; publica em
+    /// `simulators` e `simRuntimes`.
     func loadSimulators() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let sims = self?.collectSimulators() ?? []
-            DispatchQueue.main.async { self?.simulators = sims }
+            let runtimes = self?.collectRuntimes() ?? []
+            DispatchQueue.main.async {
+                self?.simulators = sims
+                self?.simRuntimes = runtimes
+                let never = runtimes.filter { $0.lastUsed == nil }
+                Analytics.simRuntimesSeen(count: runtimes.count, neverUsed: never.count,
+                                          deletable: runtimes.filter(\.deletable).count,
+                                          bytes: runtimes.reduce(0) { $0 + $1.bytes },
+                                          neverUsedBytes: never.reduce(0) { $0 + $1.bytes })
+            }
+        }
+    }
+
+    /// Roda `xcrun simctl <args>` e devolve o JSON (nil se falhar).
+    private func simctlJSON(_ args: [String]) -> [String: Any]? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = ["simctl"] + args
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// runtimeIdentifier -> nome de exibição. Usa o nome oficial do simctl
+    /// ("iOS 27.2"); variantes de hardware têm o MESMO nome, então o sufixo do
+    /// identificador vira qualificador: "...iOS-27-2-iPhone19-4" -> "iOS 27.2 (iPhone19,4)".
+    private func runtimeDisplayNames() -> [String: String] {
+        guard let list = simctlJSON(["list", "runtimes", "-j"])?["runtimes"] as? [[String: Any]] else { return [:] }
+        var names: [String: String] = [:]
+        for r in list {
+            guard let ident = r["identifier"] as? String, let name = r["name"] as? String else { continue }
+            let comp = ident.split(separator: ".").last.map(String.init) ?? ident
+            let prefix = name.replacingOccurrences(of: " ", with: "-").replacingOccurrences(of: ".", with: "-")
+            var qualifier = comp.hasPrefix(prefix) ? String(comp.dropFirst(prefix.count)) : ""
+            if qualifier.hasPrefix("-") { qualifier.removeFirst() }
+            if let dash = qualifier.lastIndex(of: "-") { qualifier.replaceSubrange(dash...dash, with: ",") }
+            names[ident] = qualifier.isEmpty ? name : "\(name) (\(qualifier))"
+        }
+        return names
+    }
+
+    private func collectRuntimes() -> [SimRuntime] {
+        guard let images = simctlJSON(["runtime", "list", "-j"]) as? [String: [String: Any]] else { return [] }
+        let names = runtimeDisplayNames()
+        // Quantos simuladores dependem de cada runtime, e se algum está ligado.
+        var devCount: [String: Int] = [:], booted = Set<String>()
+        if let devices = simctlJSON(["list", "devices", "-j"])?["devices"] as? [String: [[String: Any]]] {
+            for (rt, list) in devices {
+                devCount[rt] = list.count
+                if list.contains(where: { ($0["state"] as? String) == "Booted" }) { booted.insert(rt) }
+            }
+        }
+        let iso = ISO8601DateFormatter()
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var out: [SimRuntime] = []
+        for (key, r) in images {
+            let rtID = r["runtimeIdentifier"] as? String ?? ""
+            let id = r["identifier"] as? String ?? key
+            let used = (r["lastUsedAt"] as? String).flatMap { isoFrac.date(from: $0) ?? iso.date(from: $0) }
+            out.append(SimRuntime(id: id, name: names[rtID] ?? prettyRuntime(rtID),
+                                  bytes: Int64(r["sizeBytes"] as? Int ?? 0),
+                                  lastUsed: used,
+                                  deletable: r["deletable"] as? Bool ?? false,
+                                  deviceCount: devCount[rtID] ?? 0,
+                                  inUse: booted.contains(rtID)))
+        }
+        return out.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// Apaga runtimes específicos via `simctl runtime delete <id>`, um por um.
+    /// Irreversível (a UI confirma em dois cliques). Conta como apagado só se
+    /// o runtime sumiu da lista ou entrou em remoção — não basta o exit code.
+    func deleteRuntimes(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
+        // Tamanho e "nunca usado" lidos ANTES (depois o runtime some da lista).
+        let before = Dictionary(uniqueKeysWithValues: simRuntimes.map { ($0.id, $0) })
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var ok = 0, failed = 0
+            var freed: Int64 = 0, neverUsed = 0
+            var reason: String? = nil
+            for id in ids {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+                p.arguments = ["simctl", "runtime", "delete", id]
+                p.standardOutput = Pipe()
+                let err = Pipe()
+                p.standardError = err
+                try? p.run()
+                let errData = err.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                let after = self?.simctlJSON(["runtime", "list", "-j"]) as? [String: [String: Any]] ?? [:]
+                let still = after.values.first { ($0["identifier"] as? String) == id }
+                let state = still?["state"] as? String ?? ""
+                if still == nil || state.localizedCaseInsensitiveContains("delet") {
+                    ok += 1
+                    freed += before[id]?.bytes ?? 0
+                    if before[id]?.lastUsed == nil { neverUsed += 1 }
+                } else {
+                    failed += 1
+                    if reason == nil {
+                        let msg = (String(data: errData, encoding: .utf8) ?? "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        reason = msg.split(whereSeparator: \.isNewline).first.map(String.init)
+                    }
+                }
+            }
+            let sims = self?.collectSimulators() ?? []
+            let runtimes = self?.collectRuntimes() ?? []
+            let result = (ok: ok, failed: failed, freed: freed, neverUsed: neverUsed)
+            DispatchQueue.main.async {
+                Analytics.runtimesDeleted(ok: result.ok, failed: result.failed,
+                                          neverUsed: result.neverUsed, freedBytes: result.freed)
+                self?.runtimeSpecificDeleteDone = (ok, failed, reason)
+                self?.simulators = sims
+                self?.simRuntimes = runtimes
+                if ok > 0 { self?.scan() }
+            }
         }
     }
 
@@ -1522,6 +1937,7 @@ final class DiskScanner: ObservableObject {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let devices = json["devices"] as? [String: [[String: Any]]] else { return [] }
         let root = home.appendingPathComponent("Library/Developer/CoreSimulator/Devices")
+        let names = runtimeDisplayNames()
         var sims: [SimDevice] = []
         for (runtimeID, list) in devices {
             for dev in list {
@@ -1531,7 +1947,7 @@ final class DiskScanner: ObservableObject {
                 if let avail = dev["isAvailable"] as? Bool, !avail { continue }
                 let b = size(of: root.appendingPathComponent(udid))
                 guard b > minBytes else { continue }
-                sims.append(SimDevice(id: udid, name: name, runtime: prettyRuntime(runtimeID),
+                sims.append(SimDevice(id: udid, name: name, runtime: names[runtimeID] ?? prettyRuntime(runtimeID),
                                       bytes: b, booted: (dev["state"] as? String) == "Booted"))
             }
         }
@@ -1639,6 +2055,78 @@ final class DiskScanner: ObservableObject {
         (UserDefaults.standard.object(forKey: Prefs.notifyThreshold) as? Double) ?? Prefs.defaultThreshold
     }
 
+    private var worktreeIdleDays: Int {
+        (UserDefaults.standard.object(forKey: Prefs.worktreeIdleDays) as? Int) ?? Prefs.worktreeIdleDaysDefault
+    }
+
+    private var worktreeReminderEnabled: Bool {
+        (UserDefaults.standard.object(forKey: Prefs.worktreeReminderEnabled) as? Bool) ?? true
+    }
+
+    /// Lembrete vencido mas sem scan recente (app fechado na barra de menu):
+    /// pede UM scan por dia no máximo — o lembrete é avaliado no fim dele.
+    func worktreeReminderIfDue() {
+        let d = UserDefaults.standard
+        guard worktreeReminderEnabled, !scanning else { return }
+        let now = Date()
+        guard now.timeIntervalSince1970 - d.double(forKey: Prefs.worktreeReminderLastTs)
+                >= Prefs.worktreeReminderInterval else { return }
+        guard lastScan.map({ now.timeIntervalSince($0) >= 86_400 }) ?? true else { return }
+        scan()
+    }
+
+    /// Avisa (no máx 1x por semana) quando há worktrees paradas somando ≥ 1 GB.
+    /// Clicar na notificação abre a janela (ver AppDelegate).
+    private func checkWorktreeReminder() {
+        guard worktreeReminderEnabled else { return }
+        let d = UserDefaults.standard
+        let now = Date()
+        guard now.timeIntervalSince1970 - d.double(forKey: Prefs.worktreeReminderLastTs)
+                >= Prefs.worktreeReminderInterval else { return }
+        let days = worktreeIdleDays
+        let idle = targets.filter { $0.isIdleWorktree(days: days, now: now) }
+        let total = idle.reduce(Int64(0)) { $0 + $1.bytes }
+        guard !idle.isEmpty, total >= Prefs.worktreeReminderMinBytes else { return }
+        d.set(now.timeIntervalSince1970, forKey: Prefs.worktreeReminderLastTs)
+        let content = UNMutableNotificationContent()
+        content.title = L10n.worktreeReminderTitle(count: idle.count, size: fmt(total))
+        content.body = L10n.worktreeReminderBody(days: days)
+        let req = UNNotificationRequest(identifier: Self.worktreeReminderID, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
+        Analytics.worktreeReminder("sent", count: idle.count, idleDays: days, bytes: total)
+    }
+
+    static let worktreeReminderID = "harbofly.worktrees"
+
+    /// Paisagem de worktrees pro analytics (1x por sessão; só contagens/GB).
+    private func reportWorktreeLandscape() {
+        let wts = targets.filter { $0.isWorktree && !$0.worktreePrune }
+        let removable = wts.filter(\.isRemovableWorktree)
+        let days = worktreeIdleDays
+        Analytics.worktreesSeen(
+            total: wts.count,
+            removable: removable.count,
+            locked: wts.filter { $0.detailKey == \L.worktreeLocked }.count,
+            dirty: wts.filter { $0.detailKey == \L.worktreeDirty }.count,
+            detached: wts.filter { $0.detailKey == \L.worktreeDetached }.count,
+            orphanRepos: targets.filter(\.worktreePrune).count,
+            idle: removable.filter { $0.isIdleWorktree(days: days) }.count,
+            agent: wts.filter { $0.url.path.contains("/.claude/worktrees/") }.count,
+            bytes: wts.reduce(0) { $0 + $1.bytes },
+            removableBytes: removable.reduce(0) { $0 + $1.bytes })
+    }
+
+    /// Estado das preferências da lista (1x por sessão).
+    private func reportUIPrefs() {
+        let d = UserDefaults.standard
+        Analytics.uiPrefs(tierOrder: d.string(forKey: Prefs.tierOrder).flatMap { $0.isEmpty ? nil : $0 }
+                            ?? "safe,caution,info",
+                          collapsed: d.string(forKey: Prefs.collapsedTiers) ?? "",
+                          reminder: worktreeReminderEnabled,
+                          idleDays: worktreeIdleDays,
+                          autoWorktrees: d.bool(forKey: Prefs.autoCleanWorktrees))
+    }
+
     private func checkLowSpaceNotification() {
         guard totalBytes > 0 else { return }
         let ratio = Double(freeBytes) / Double(totalBytes)
@@ -1670,6 +2158,10 @@ struct ContentView: View {
     @State private var pane: Pane = .cleaner
     @State private var selection = Set<UUID>()
     @State private var cleanerQuery = ""
+    @State private var cleanerSort: CleanerSort = .size
+    @AppStorage(Prefs.collapsedTiers) private var collapsedTiers = ""
+    @AppStorage(Prefs.tierOrder) private var tierOrder = ""
+    @State private var tierDropTarget: Tier? = nil
     @State private var confirming = false
     @State private var confirmingSimDelete = false
     @State private var confirmingRuntimeDelete = false
@@ -1678,6 +2170,8 @@ struct ContentView: View {
     @State private var showSimList = false
     @State private var simSelection = Set<String>()
     @State private var confirmingSimSpecificDelete = false
+    @State private var runtimeSelection = Set<String>()
+    @State private var confirmingRuntimeSpecificDelete = false
     @State private var launchAtLogin = false
     @State private var showSupport = false
     @State private var pixCopied = false
@@ -1706,6 +2200,9 @@ struct ContentView: View {
     @AppStorage(Prefs.autoCleanTrigger) private var autoCleanTrigger = "daily"
     @AppStorage(Prefs.autoCleanScope) private var autoCleanScope = "all"
     @AppStorage(Prefs.autoCleanMinBytes) private var autoCleanMinBytes = Prefs.autoCleanMinBytesDefault
+    @AppStorage(Prefs.autoCleanWorktrees) private var autoCleanWorktrees = false
+    @AppStorage(Prefs.worktreeReminderEnabled) private var worktreeReminderEnabled = true
+    @AppStorage(Prefs.worktreeIdleDays) private var worktreeIdleDays = Prefs.worktreeIdleDaysDefault
     @AppStorage(Prefs.autoCleanLastCleanTs) private var autoCleanLastCleanTs = 0.0
     @AppStorage(Prefs.autoCleanLastBytes) private var autoCleanLastBytes = 0.0
     @AppStorage(Prefs.autoCleanLastCount) private var autoCleanLastCount = 0
@@ -1814,6 +2311,12 @@ struct ContentView: View {
         .onChange(of: autoCleanEnabled) { _, _ in reportAutoCleanConfig() }
         .onChange(of: autoCleanTrigger) { _, _ in reportAutoCleanConfig() }
         .onChange(of: autoCleanScope) { _, _ in reportAutoCleanConfig() }
+        .onChange(of: autoCleanWorktrees) { _, _ in reportAutoCleanConfig() }
+        .onChange(of: worktreeReminderEnabled) { _, on in
+            Analytics.uiChanged(kind: "wt_reminder", value: on ? "on" : "off")
+        }
+        .onChange(of: worktreeIdleDays) { _, d in Analytics.uiChanged(kind: "idle_days", value: "\(d)") }
+        .onChange(of: cleanerSort) { _, s in Analytics.uiChanged(kind: "sort", value: "\(s)") }
         .onChange(of: scanner.justCleaned) { _, cleaned in
             guard cleaned else { return }
             scanner.justCleaned = false
@@ -1836,7 +2339,8 @@ struct ContentView: View {
     }
 
     private func reportAutoCleanConfig() {
-        Analytics.autoCleanConfigured(enabled: autoCleanEnabled, trigger: autoCleanTrigger, scope: autoCleanScope)
+        Analytics.autoCleanConfigured(enabled: autoCleanEnabled, trigger: autoCleanTrigger,
+                                      scope: autoCleanScope, worktrees: autoCleanWorktrees)
     }
 
     private func setLoginItem(_ enabled: Bool) {
@@ -2015,6 +2519,13 @@ struct ContentView: View {
 
                 if selectedTargets.contains(where: { $0.isGitGC }) {
                     Text(L10n.gitGCNote)
+                        .font(.callout).foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if selectedTargets.contains(where: { $0.isWorktree }) {
+                    Text(L10n.worktreeRemoveNote)
                         .font(.callout).foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2255,6 +2766,9 @@ struct ContentView: View {
                 .labelsHidden().pickerStyle(.menu).fixedSize()
                 Spacer()
             }
+            Toggle(L10n.autoCleanWorktreesToggle(days: worktreeIdleDays), isOn: $autoCleanWorktrees)
+                .toggleStyle(.checkbox).font(.caption)
+                .help(L10n.autoCleanWorktreesHelp)
             Text(L10n.autoCleanNote)
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2324,10 +2838,15 @@ struct ContentView: View {
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
-                let safe = safeTargets.filter(matchesQuery)
-                let caution = cautionTargets.filter(matchesQuery)
-                let info = infoTargets.filter(matchesQuery)
-                HStack {
+                let safe = sortedTargets(safeTargets.filter(matchesQuery))
+                let caution = sortedTargets(cautionTargets.filter(matchesQuery))
+                let info = sortedTargets(infoTargets.filter(matchesQuery))
+                HStack(spacing: 6) {
+                    Text(L10n.sortBy).font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $cleanerSort) {
+                        ForEach(CleanerSort.allCases, id: \.self) { Text(cleanerSortLabel($0)).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
                     Spacer()
                     HStack(spacing: 4) {
                         Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(.secondary)
@@ -2341,23 +2860,22 @@ struct ContentView: View {
                     .background(Color.gray.opacity(0.12)).clipShape(Capsule())
                     .fixedSize()
                 }
+                if !scanner.worktreeUndo.isEmpty { worktreeUndoBanner }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
                         if safe.isEmpty && caution.isEmpty && info.isEmpty {
                             Text(L10n.nothingFound).font(.callout).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, minHeight: 120)
                         }
-                        if !safe.isEmpty {
-                            tierHeader(L10n.tierSafe, safe)
-                            ForEach(safe) { row($0) }
-                        }
-                        if !caution.isEmpty {
-                            tierHeader(L10n.tierCaution, caution)
-                            ForEach(caution) { row($0) }
-                        }
-                        if !info.isEmpty {
-                            tierHeader(L10n.tierInfo, info)
-                            ForEach(info) { infoRow($0) }
+                        let byTier: [Tier: [CleanTarget]] = [.safe: safe, .caution: caution, .info: info]
+                        ForEach(orderedTiers, id: \.self) { tier in
+                            let items = byTier[tier] ?? []
+                            if !items.isEmpty {
+                                tierHeader(tierTitle(tier), tier, items)
+                                if isExpanded(tier) {
+                                    ForEach(items) { tier == .info ? AnyView(infoRow($0)) : AnyView(row($0)) }
+                                }
+                            }
                         }
                     }
                     .padding(.trailing, 4)
@@ -2367,14 +2885,185 @@ struct ContentView: View {
         }
     }
 
-    private func tierHeader(_ title: String, _ items: [CleanTarget]) -> some View {
+    /// Cabeçalho de tier: clicar recolhe/expande (o estado persiste; com busca
+    /// ativa fica tudo expandido, senão o resultado some numa seção fechada).
+    /// Arrastar pela alça e soltar em outro cabeçalho reordena as seções.
+    private func tierHeader(_ title: String, _ tier: Tier, _ items: [CleanTarget]) -> some View {
         let total = items.reduce(Int64(0)) { $0 + $1.bytes }
-        return HStack {
-            Text(title).font(.subheadline.bold()).foregroundStyle(.secondary)
-            Spacer()
-            Text(fmt(total)).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+        let expanded = isExpanded(tier)
+        let selectedHere = items.filter { selection.contains($0.id) }.count
+        let order = orderedTiers
+        let idx = order.firstIndex(of: tier) ?? 0
+        return HStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal")
+                .font(.caption).foregroundStyle(.tertiary)
+                .help(L10n.dragToReorder)
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { toggleCollapsed(tier) }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold()).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    Text(title).font(.subheadline.bold()).foregroundStyle(.secondary)
+                    Text("\(items.count)").font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+                    // Recolhida, a seção ainda pode ter itens marcados: mostra quantos.
+                    if !expanded && selectedHere > 0 {
+                        Label("\(selectedHere)", systemImage: "checkmark.circle.fill")
+                            .font(.caption.monospacedDigit()).foregroundStyle(Color.accentColor)
+                    }
+                    Spacer()
+                    Text(fmt(total)).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .padding(.top, 6)
+        .padding(.vertical, 4).padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.accentColor, lineWidth: tierDropTarget == tier ? 1.5 : 0)
+        )
+        .padding(.top, 2)
+        .contentShape(Rectangle())
+        .draggable(tier.key) {
+            Text(title).font(.subheadline.bold()).padding(6)
+        }
+        .dropDestination(for: String.self) { keys, _ in
+            guard let key = keys.first else { return false }
+            withAnimation(.easeInOut(duration: 0.15)) { moveTier(key: key, onto: tier) }
+            return true
+        } isTargeted: { targeted in
+            if targeted { tierDropTarget = tier } else if tierDropTarget == tier { tierDropTarget = nil }
+        }
+        .contextMenu {
+            Button(L10n.moveUp) { withAnimation { moveTier(tier, by: -1) } }.disabled(idx == 0)
+            Button(L10n.moveDown) { withAnimation { moveTier(tier, by: 1) } }.disabled(idx == order.count - 1)
+        }
+    }
+
+    private func tierTitle(_ tier: Tier) -> String {
+        switch tier {
+        case .safe: return L10n.tierSafe
+        case .caution: return L10n.tierCaution
+        case .info: return L10n.tierInfo
+        }
+    }
+
+    /// Ordem das seções escolhida pelo usuário. Leitura defensiva: chave
+    /// desconhecida é descartada e tier ausente volta na ordem padrão, então uma
+    /// preferência corrompida nunca some com uma seção.
+    private var orderedTiers: [Tier] {
+        let all: [Tier] = [.safe, .caution, .info]
+        var out: [Tier] = []
+        for key in tierOrder.split(separator: ",").map(String.init) {
+            if let t = all.first(where: { $0.key == key }), !out.contains(t) { out.append(t) }
+        }
+        for t in all where !out.contains(t) { out.append(t) }
+        return out
+    }
+
+    private func saveTierOrder(_ order: [Tier], method: String) {
+        tierOrder = order.map(\.key).joined(separator: ",")
+        Analytics.uiChanged(kind: "reorder", value: tierOrder, method: method)
+    }
+
+    /// Solta `key` sobre `target`: arrastando pra baixo cai depois do alvo, pra
+    /// cima cai antes — assim dá pra levar a seção pro topo e pro fim.
+    private func moveTier(key: String, onto target: Tier) {
+        var order = orderedTiers
+        guard let from = order.firstIndex(where: { $0.key == key }),
+              let to = order.firstIndex(of: target), from != to else { return }
+        let moving = order.remove(at: from)
+        order.insert(moving, at: to)
+        saveTierOrder(order, method: "drag")
+    }
+
+    private func moveTier(_ tier: Tier, by delta: Int) {
+        var order = orderedTiers
+        guard let from = order.firstIndex(of: tier) else { return }
+        let to = from + delta
+        guard order.indices.contains(to) else { return }
+        order.swapAt(from, to)
+        saveTierOrder(order, method: "menu")
+    }
+
+    private var collapsedTierKeys: Set<String> {
+        Set(collapsedTiers.split(separator: ",").map(String.init))
+    }
+
+    private func isExpanded(_ tier: Tier) -> Bool {
+        !cleanerQuery.trimmingCharacters(in: .whitespaces).isEmpty || !collapsedTierKeys.contains(tier.key)
+    }
+
+    private func toggleCollapsed(_ tier: Tier) {
+        var keys = collapsedTierKeys
+        let collapsing = !keys.contains(tier.key)
+        Analytics.uiChanged(kind: collapsing ? "collapse" : "expand", value: tier.key)
+        if keys.contains(tier.key) { keys.remove(tier.key) } else { keys.insert(tier.key) }
+        collapsedTiers = keys.sorted().joined(separator: ",")
+    }
+
+    /// Ordena dentro de cada tier (a separação seguro/cuidado/informativo fica).
+    private func sortedTargets(_ ts: [CleanTarget]) -> [CleanTarget] {
+        switch cleanerSort {
+        case .size:
+            return ts.sorted { $0.bytes > $1.bytes }
+        case .oldest:
+            // Sem data medida vai pro fim: não dá pra afirmar que é velho.
+            return ts.sorted { ($0.lastModified ?? .distantFuture) < ($1.lastModified ?? .distantFuture) }
+        case .name:
+            return ts.sorted { $0.displayLabel.localizedStandardCompare($1.displayLabel) == .orderedAscending }
+        }
+    }
+
+    private func cleanerSortLabel(_ s: CleanerSort) -> String {
+        switch s {
+        case .size: return L10n.sortSize
+        case .oldest: return L10n.sortOldest
+        case .name: return L10n.sortName
+        }
+    }
+
+    /// Situação da branch da worktree: no remoto, ou com commits só locais
+    /// (que continuam no repo mesmo removendo a worktree).
+    @ViewBuilder
+    private func worktreeBranchLabel(_ t: CleanTarget) -> some View {
+        if let n = t.worktreeLocalCommits {
+            if n == 0 {
+                Label(L10n.worktreeBranchPushed, systemImage: "checkmark.icloud")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Label(L10n.worktreeLocalCommits(n), systemImage: "arrow.up.circle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func growthBadge(_ text: String) -> some View {
+        Text(text).font(.caption.bold()).foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Depois de remover worktrees: como trazer de volta (fica até fechar).
+    private var worktreeUndoBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.uturn.backward.circle").foregroundStyle(.blue)
+            Text(L10n.worktreeUndoTitle(scanner.worktreeUndo.count))
+                .font(.caption).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            Button(L10n.copyUndoCommands) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(scanner.worktreeUndo.joined(separator: "\n"), forType: .string)
+                Analytics.infoAction("worktreeUndoCopied")
+            }
+            .font(.caption)
+            Button { scanner.worktreeUndo = [] } label: { Image(systemName: "xmark.circle.fill") }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+        }
+        .padding(8)
+        .background(Color.blue.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     /// Cache "velho" = sem toque há mais que o limiar de projeto parado → destaca.
@@ -2413,6 +3102,8 @@ struct ContentView: View {
                     Label(L10n.unsavedWorkNote, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.red)
                 }
+                if t.isWorktree { worktreeBranchLabel(t) }
+                if let g = t.growthNote { growthBadge(g) }
             }
         }
         .padding(10)
@@ -2438,12 +3129,104 @@ struct ContentView: View {
         scanner.simulators.filter { simSelection.contains($0.id) }.reduce(0) { $0 + $1.bytes }
     }
 
-    /// Sub-lista expansível do CoreSimulator: cada simulador com tamanho, seleção
-    /// múltipla e um botão pra apagar os selecionados (via `simctl delete`).
+    /// Runtime só é selecionável se o simctl permite apagar e nenhum simulador
+    /// dele está ligado agora.
+    private func runtimeSelectable(_ r: SimRuntime) -> Bool { r.deletable && !r.inUse }
+
+    /// Runtimes (imagens do iOS): ficam fora da pasta CoreSimulator, então
+    /// mostram o próprio total. Apagar um deixa os simuladores dele inutilizáveis.
+    @ViewBuilder
+    private func runtimeList() -> some View {
+        let total = scanner.simRuntimes.reduce(Int64(0)) { $0 + $1.bytes }
+        let picked = scanner.simRuntimes.filter { runtimeSelection.contains($0.id) }
+        let pickedBytes = picked.reduce(Int64(0)) { $0 + $1.bytes }
+        let orphaned = picked.reduce(0) { $0 + $1.deviceCount }
+        HStack {
+            Text(L10n.simRuntimesHeader).font(.caption.bold()).foregroundStyle(.secondary)
+            Spacer()
+            Text(fmt(total)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        }
+        Text(L10n.simRuntimesOutside).font(.caption2).foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
+        ForEach(scanner.simRuntimes) { r in
+            let selectable = runtimeSelectable(r)
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: runtimeSelection.contains(r.id) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(runtimeSelection.contains(r.id) ? Color.accentColor : .secondary)
+                    .opacity(selectable ? 1 : 0.3)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(r.name).font(.caption).lineLimit(1)
+                    Text(runtimeSubtitle(r)).font(.caption2)
+                        .foregroundStyle(r.lastUsed == nil && selectable ? .orange : .secondary)
+                }
+                Spacer()
+                Text(fmt(r.bytes)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard selectable else { return }
+                if runtimeSelection.contains(r.id) { runtimeSelection.remove(r.id) }
+                else { runtimeSelection.insert(r.id) }
+                confirmingRuntimeSpecificDelete = false
+            }
+        }
+        if confirmingRuntimeSpecificDelete && orphaned > 0 {
+            Text(L10n.runtimeDeleteOrphansWarn(orphaned)).font(.caption).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        Button {
+            if confirmingRuntimeSpecificDelete {
+                confirmingRuntimeSpecificDelete = false
+                Analytics.infoAction("deleteRuntimes")
+                let ids = Array(runtimeSelection)
+                runtimeSelection.removeAll()
+                scanner.deleteRuntimes(ids)
+            } else {
+                scanner.runtimeSpecificDeleteDone = nil
+                confirmingRuntimeSpecificDelete = true
+            }
+        } label: {
+            Label(confirmingRuntimeSpecificDelete
+                    ? L10n.deleteSelectedSimsConfirm
+                    : L10n.deleteSelectedRuntimes(count: picked.count, size: fmt(pickedBytes)),
+                  systemImage: confirmingRuntimeSpecificDelete ? "exclamationmark.triangle.fill" : "trash")
+                .font(.caption)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(confirmingRuntimeSpecificDelete ? .red : .blue)
+        .disabled(runtimeSelection.isEmpty)
+        if let r = scanner.runtimeSpecificDeleteDone {
+            Text(L10n.runtimesDeleted(ok: r.ok, failed: r.failed, reason: r.reason)).font(.caption)
+                .foregroundStyle(r.failed > 0 ? .orange : (r.ok > 0 ? .green : .secondary))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// "3 simuladores · usado há 1 dia" / "nunca usado" / "vem com o Xcode".
+    private func runtimeSubtitle(_ r: SimRuntime) -> String {
+        var parts = [L10n.runtimeDevices(r.deviceCount)]
+        if r.inUse { parts.append(L10n.runtimeInUse) }
+        else if !r.deletable { parts.append(L10n.runtimeBuiltIn) }
+        parts.append(r.lastUsed.map { L10n.runtimeLastUsed(relativeAge($0)) } ?? L10n.runtimeNeverUsed)
+        return parts.joined(separator: " · ")
+    }
+
+    /// Sub-lista expansível do CoreSimulator: runtimes (imagens do iOS) e cada
+    /// simulador com tamanho, seleção múltipla e botões pra apagar os selecionados.
     @ViewBuilder
     private func simulatorList() -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Divider().padding(.vertical, 2)
+            if !scanner.simRuntimes.isEmpty {
+                runtimeList()
+                Divider().padding(.vertical, 2)
+            }
+            HStack {
+                Text(L10n.simDevicesHeader).font(.caption.bold()).foregroundStyle(.secondary)
+                Spacer()
+                Text(fmt(scanner.simulators.reduce(Int64(0)) { $0 + $1.bytes }))
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
             if scanner.simulators.isEmpty {
                 Text(L10n.simNoneToDelete).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2508,6 +3291,18 @@ struct ContentView: View {
                     .font(.caption.monospaced()).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
                 Text(t.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                if let g = t.growthNote { growthBadge(g) }
+                if t.isWorktree {
+                    if let m = t.lastModified {
+                        Label(relativeAge(m), systemImage: "clock")
+                            .font(.caption).foregroundStyle(isOldCache(m) ? .orange : .secondary)
+                    }
+                    if let pending = t.worktreePending {
+                        Label(pending, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(.red)
+                    }
+                    worktreeBranchLabel(t)
+                }
                 HStack(spacing: 12) {
                     // A linha de purgeable aponta pro volume (home): revelar
                     // no Finder não diz nada — esconde o botão nesse caso.
@@ -2721,6 +3516,17 @@ struct ContentView: View {
                 .disabled(!notifyEnabled)
                 Spacer()
             }
+            HStack(spacing: 6) {
+                Toggle(L10n.worktreeReminderToggle, isOn: $worktreeReminderEnabled)
+                    .toggleStyle(.checkbox)
+                Picker("", selection: $worktreeIdleDays) {
+                    ForEach([1, 3, 7, 14, 30], id: \.self) { Text(L10n.daysShort($0)).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 80)
+                Spacer()
+            }
+            .help(L10n.worktreeIdleHelp)
             HStack {
                 Toggle(L10n.autoCleanToggle, isOn: $autoCleanEnabled)
                     .toggleStyle(.checkbox)
@@ -2848,9 +3654,10 @@ func presentVolumesWindow(using openWindow: OpenWindowAction) {
     openWindow(id: AppInfo.volumesWindowID)
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu bar only, sem dock
+        UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         Analytics.bootstrapIfConsented()
 
@@ -2884,6 +3691,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return wid.hasPrefix(AppInfo.mainWindowID) || wid.hasPrefix(AppInfo.volumesWindowID)
         }
         if !ours { NSApp.setActivationPolicy(.accessory) }
+    }
+
+    /// Clicar no lembrete de worktrees abre a janela com a lista (as outras
+    /// notificações seguem como antes).
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.notification.request.identifier == DiskScanner.worktreeReminderID {
+            DispatchQueue.main.async {
+                Analytics.worktreeReminder("opened")
+                MainWindowRequester.shared.pending = true
+            }
+        }
+        completionHandler()
     }
 
     /// true quando o launch veio do login item (SMAppService), não do usuário.

@@ -61,8 +61,14 @@ enum Affinity {
 /// Base da detecção de crescimento: diffar o agora contra um snapshot antigo
 /// revela o que encheu o disco em silêncio (um `~/.git` novo, o `uv` crescendo).
 enum SizeLog {
-    struct Snap { let ts: Double; let cats: [String: Int64] }
+    struct Snap { let ts: Double; let cats: [String: Int64]; let measures: Set<String> }
     static let maxSnaps = 60
+    /// Categorias que só passaram a ser medidas numa versão nova do app. Cada
+    /// snapshot grava quais destas a versão dele sabia medir: sem isso, a 1ª
+    /// medição depois de atualizar parece "apareceu do nada" e dispara um
+    /// alerta de crescimento falso. Ao criar um scanner novo, inclua a
+    /// categoria aqui.
+    static let versionedCategories: Set<String> = ["worktree"]
     /// No máx 1 snapshot a cada 6h — vários scans/dia não incham o defaults.
     static let minInterval = 21_600.0
 
@@ -71,7 +77,8 @@ enum SizeLog {
         let d = UserDefaults.standard
         var raw = d.array(forKey: Prefs.sizeHistory) as? [[String: Any]] ?? []
         if let lastTs = raw.first?["ts"] as? Double, now - lastTs < minInterval { return }
-        raw.insert(["ts": now, "cats": cats.mapValues { Double($0) }], at: 0)
+        raw.insert(["ts": now, "cats": cats.mapValues { Double($0) },
+                    "measures": Array(versionedCategories).sorted()], at: 0)
         d.set(Array(raw.prefix(maxSnaps)), forKey: Prefs.sizeHistory)
     }
 
@@ -81,7 +88,9 @@ enum SizeLog {
         return raw.compactMap { e in
             guard let ts = e["ts"] as? Double else { return nil }
             let cats = (e["cats"] as? [String: Double] ?? [:]).mapValues { Int64($0) }
-            return Snap(ts: ts, cats: cats)
+            // Snapshot antigo não tem a chave: não media nenhuma categoria nova.
+            let measures = Set(e["measures"] as? [String] ?? [])
+            return Snap(ts: ts, cats: cats, measures: measures)
         }
     }
 

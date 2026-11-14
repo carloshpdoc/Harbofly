@@ -61,6 +61,8 @@ enum CLI {
                 if t.unsavedWork { row["unsavedWork"] = true }
                 if t.isDocker { row["docker"] = true }
                 if t.isGitGC { row["gitgc"] = true }
+                if t.isWorktree { row["worktree"] = true }
+                if let p = t.worktreePending { row["pending"] = p }
                 return row
             }
             let payload: [String: Any] = ["freeBytes": free, "totalBytes": total, "targets": rows]
@@ -91,7 +93,7 @@ enum CLI {
         // Docker fica de fora (prune é irreversível — use o app ou o docker).
         // git gc também fica de fora (a ação é recompactar o repo, não Lixeira —
         // mandar um repo pra Lixeira seria catastrófico; use o app ou `git gc`).
-        var eligible = targets.filter { $0.tier == .safe && !$0.isDocker && !$0.isGitGC }
+        var eligible = targets.filter { $0.tier == .safe && !$0.isDocker && !$0.isGitGC && !$0.isWorktree }
         if staleOnly {
             eligible = eligible.filter { ($0.staleDays ?? 0) >= Prefs.staleThresholdDays }
         }
