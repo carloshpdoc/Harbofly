@@ -11,6 +11,9 @@ enum AppInfo {
     static let name = "Harbofly"
     /// id da Window scene principal (usado também pra reconhecer a NSWindow).
     static let mainWindowID = "main"
+    /// id da janela "Discos". Cena separada porque a principal é `fixedSize()`
+    /// em 470pt e uma tabela de milhares de linhas precisa de janela que estica.
+    static let volumesWindowID = "volumes"
     // Lê do próprio bundle (setado pelo make-app.sh). "dev" quando roda via `swift run`.
     // Via symlink (ex.: /opt/homebrew/bin/harbofly, criado pelo cask), o Bundle.main
     // aponta pro diretório do symlink e não acha o Info.plist — resolvemos o
@@ -2837,6 +2840,14 @@ func presentMainWindow(using openWindow: OpenWindowAction) {
     openWindow(id: AppInfo.mainWindowID)
 }
 
+/// Mostra a janela "Discos" (mesma transição de política do Dock).
+@MainActor
+func presentVolumesWindow(using openWindow: OpenWindowAction) {
+    NSApp.setActivationPolicy(.regular)
+    NSApp.activate(ignoringOtherApps: true)
+    openWindow(id: AppInfo.volumesWindowID)
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu bar only, sem dock
@@ -2863,9 +2874,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func windowWillClose(_ note: Notification) {
-        guard let w = note.object as? NSWindow,
-              w.identifier?.rawValue.hasPrefix(AppInfo.mainWindowID) == true else { return }
-        NSApp.setActivationPolicy(.accessory)
+        guard let id = (note.object as? NSWindow)?.identifier?.rawValue,
+              id.hasPrefix(AppInfo.mainWindowID) || id.hasPrefix(AppInfo.volumesWindowID)
+        else { return }
+        // Só volta a ser só-barra-de-menu quando não sobrou janela nossa aberta.
+        let ours = NSApp.windows.contains { w in
+            guard w.isVisible, w != note.object as? NSWindow,
+                  let wid = w.identifier?.rawValue else { return false }
+            return wid.hasPrefix(AppInfo.mainWindowID) || wid.hasPrefix(AppInfo.volumesWindowID)
+        }
+        if !ours { NSApp.setActivationPolicy(.accessory) }
     }
 
     /// true quando o launch veio do login item (SMAppService), não do usuário.
@@ -2920,7 +2938,8 @@ enum Main {
         // do Finder/Xcode etc.) seguem pro app normal.
         let args = Array(CommandLine.arguments.dropFirst())
         if let cmd = args.first,
-           ["scan", "clean", "dups", "duplicates", "help", "--help", "-h", "version", "--version"].contains(cmd) {
+           ["scan", "clean", "dups", "duplicates", "volumes", "disks", "index", "compare",
+            "help", "--help", "-h", "version", "--version"].contains(cmd) {
             exit(CLI.run(args))
         }
         HarboflyApp.main()
@@ -2936,6 +2955,10 @@ struct HarboflyApp: App {
     @StateObject private var duplicates = DuplicateScanner()
     @StateObject private var uninstaller = AppUninstaller()
     @StateObject private var startup = StartupManager()
+    // Também compartilhados entre as cenas: fechar e reabrir a janela "Discos"
+    // não joga fora o resultado de uma varredura que levou minutos.
+    @StateObject private var volumeIndexer = VolumeIndexer()
+    @StateObject private var crossVolume = CrossVolumeScanner()
 
     var body: some Scene {
         MenuBarExtra {
@@ -2950,5 +2973,12 @@ struct HarboflyApp: App {
                 .fixedSize()
         }
         .windowResizability(.contentSize)
+
+        // Janela "Discos": redimensionável de propósito — aqui a lista pode ter
+        // dezenas de milhares de linhas.
+        Window(L10n.volumesTitle, id: AppInfo.volumesWindowID) {
+            VolumesView(indexer: volumeIndexer, cross: crossVolume)
+        }
+        .defaultSize(width: 1100, height: 700)
     }
 }

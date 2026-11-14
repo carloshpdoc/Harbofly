@@ -25,6 +25,19 @@ enum DupPhase: Equatable {
 
 // MARK: - Model
 
+/// Identidade física de um arquivo. Mesmo `(dev, ino)` = mesma cópia em disco
+/// (hardlink), e apagar uma das pontas não libera byte nenhum.
+struct InodeKey: Hashable { let dev: Int32; let ino: UInt64 }
+
+/// Um arquivo já medido, antes de qualquer leitura de conteúdo. Produzido tanto
+/// pela varredura do painel Duplicatas quanto pelo indexador de volumes.
+struct FileEntry {
+    let url: URL
+    let size: Int64
+    let mtime: Date
+    let inode: InodeKey
+}
+
 /// Um arquivo dentro de um grupo de duplicatas.
 struct DuplicateFile: Identifiable {
     let id = UUID()
@@ -43,10 +56,50 @@ struct DuplicateGroup: Identifiable {
     let hash: String
     /// keeper primeiro, depois os candidatos a apagar.
     var files: [DuplicateFile]
+    /// Volumes (st_dev) onde esse conteúdo aparece. Mais de um = a cópia existe
+    /// em outro disco, que é o caso que interessa ao modo "Discos".
+    var devs: Set<Int32> = []
 
     /// Espaço recuperável = (n-1) × tamanho (apaga tudo menos o keeper).
     var reclaimable: Int64 { size * Int64(max(0, files.count - 1)) }
     var removable: [DuplicateFile] { files.filter { !$0.isKeeper } }
+    /// Cópias que sobram depois de apagar `n` arquivos deste grupo.
+    func copiesAfterRemoving(_ n: Int) -> Int { max(0, files.count - n) }
+}
+
+/// Quem fica quando o mesmo conteúdo aparece em mais de um lugar.
+enum KeeperPolicy {
+    /// Comportamento histórico do painel Duplicatas: pasta mais canônica
+    /// (Documents > Pictures > resto > Desktop > Downloads), evita Lixeira e
+    /// nomes de cópia, depois mais antigo, depois caminho mais curto.
+    case canonicalFolder
+    /// Mantém qualquer cópia que **não** esteja neste conjunto de caminhos. É a
+    /// política de "liberar este disco": o keeper fica em outro lugar, qualquer
+    /// que seja.
+    ///
+    /// O conjunto é de caminhos exatos, vindo da varredura do próprio escopo —
+    /// não um prefixo. Prefixo mente: `FileManager` devolve `/private/tmp/x`
+    /// para uma raiz dada como `/tmp/x`, enquanto `resolvingSymlinksInPath()`
+    /// normaliza na direção contrária (`/private/tmp` → `/tmp`), e aí nenhum
+    /// lado reconhece o outro. Pertencimento a conjunto não tem esse furo.
+    case avoidPaths(Set<String>)
+
+    static func devOf(_ url: URL) -> Int32? {
+        var st = stat()
+        guard stat(url.path, &st) == 0 else { return nil }
+        return st.st_dev
+    }
+}
+
+/// Resultado de uma rodada do pipeline, com a contabilidade que a porta de
+/// cobertura precisa: arquivo ilegível não pode desaparecer em silêncio.
+struct DuplicateRun {
+    var groups: [DuplicateGroup] = []
+    /// Arquivos que entraram no hash completo e falharam na leitura.
+    var hashErrors = 0
+    /// Mesmo SHA-256 e bytes diferentes. Em teoria impossível; se aparecer,
+    /// é sinal de hardware ruim ou volume mentindo, e precisa ser visto.
+    var verifyMismatches = 0
 }
 
 // MARK: - Scanner
@@ -146,25 +199,37 @@ final class DuplicateScanner: ObservableObject {
     // MARK: Núcleo síncrono (compartilhado UI + CLI)
 
     func findDuplicates(roots: [URL], progress: (DupPhase) -> Void = { _ in }) -> [DuplicateGroup] {
-        // Fase 0 — enumerar, deduplicando hardlinks por (dev, inode).
+        // Fase 0 — enumerar.
         progress(.listing)
-        var bySize: [Int64: [Entry]] = [:]
-        var seenInodes = Set<InodeKey>()
+        var entries: [FileEntry] = []
         for root in roots {
-            enumerate(root) { e in
-                if seenInodes.contains(e.inode) { return }  // hardlink: cópia física única
-                seenInodes.insert(e.inode)
-                bySize[e.size, default: []].append(e)
-            }
+            enumerate(root) { entries.append($0) }
         }
+        return run(entries: entries, policy: .canonicalFolder, progress: progress).groups
+    }
 
-        // Fase 1 — só tamanhos com colisão.
+    /// Núcleo do pipeline sobre entradas **já enumeradas**. O modo "Discos" varre
+    /// cada volume uma única vez (com contabilidade por motivo de descarte) e
+    /// reusa a lista aqui, em vez de andar no disco de novo — a diferença entre
+    /// um e dois passeios num HD de 4 TB não é detalhe.
+    func run(entries: [FileEntry], policy: KeeperPolicy,
+             progress: (DupPhase) -> Void = { _ in }) -> DuplicateRun {
+        var out = DuplicateRun()
+
+        // Fase 1 — agrupa por tamanho, deduplicando hardlink por (dev, inode):
+        // mesmo inode = uma cópia física só, apagar não libera nada.
+        var bySize: [Int64: [FileEntry]] = [:]
+        var seenInodes = Set<InodeKey>()
+        for e in entries {
+            guard seenInodes.insert(e.inode).inserted else { continue }
+            bySize[e.size, default: []].append(e)
+        }
         let sizeGroups = bySize.values.filter { $0.count >= 2 }
-        guard !sizeGroups.isEmpty else { return [] }
+        guard !sizeGroups.isEmpty else { return out }
 
         // Fase 2 — hash parcial (cabeça+cauda).
         progress(.comparing(candidates: sizeGroups.reduce(0) { $0 + $1.count }))
-        var byPartial: [String: [Entry]] = [:]
+        var byPartial: [String: [FileEntry]] = [:]
         for group in sizeGroups {
             for e in group {
                 let key = "\(e.size):\(partialHash(e.url, size: e.size))"
@@ -172,55 +237,59 @@ final class DuplicateScanner: ObservableObject {
             }
         }
         let partialFlat = byPartial.values.filter { $0.count >= 2 }.flatMap { $0 }
-        guard !partialFlat.isEmpty else { return [] }
+        guard !partialFlat.isEmpty else { return out }
 
         // Fase 3 — SHA-256 completo (streaming, concorrente). Progresso
         // determinístico: cada arquivo terminado avança o contador. Emite no
         // máx ~100 vezes (step = total/100) pra não inundar main queue/stderr.
+        // Falha de leitura é CONTADA, não engolida: num volume externo com
+        // permissão torta, "desapareceu" viraria "verificado" sem aviso.
         let total = partialFlat.count
         progress(.hashing(done: 0, total: total))
-        var byFull: [String: [Entry]] = [:]
+        var byFull: [String: [FileEntry]] = [:]
         var done = 0
+        var errors = 0
         let step = max(1, total / 100)
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: total) { i in
             let e = partialFlat[i]
             let h = self.fullHash(e.url)
             lock.lock()
-            if let h { byFull[h, default: []].append(e) }
+            if let h { byFull[h, default: []].append(e) } else { errors += 1 }
             done += 1
             if done % step == 0 || done == total { progress(.hashing(done: done, total: total)) }
             lock.unlock()
         }
+        out.hashErrors = errors
         let fullGroups = byFull.filter { $0.value.count >= 2 }
 
         // Fase 4 — verificação byte-a-byte contra o keeper (garantia absoluta).
         progress(.verifying)
         var result: [DuplicateGroup] = []
-        for (hash, entries) in fullGroups {
-            let ranked = entries.sorted { keeperRank($0) < keeperRank($1) }
+        for (hash, group) in fullGroups {
+            let ranked = group.sorted { keeperRank($0, policy) < keeperRank($1, policy) }
             let keeper = ranked[0]
             var confirmed = [keeper]
-            for e in ranked.dropFirst() where bytesEqual(keeper.url, e.url) {
-                confirmed.append(e)
+            for e in ranked.dropFirst() {
+                if bytesEqual(keeper.url, e.url) { confirmed.append(e) }
+                else { out.verifyMismatches += 1 }
             }
             guard confirmed.count >= 2 else { continue }
             var files = confirmed.map {
                 DuplicateFile(url: $0.url, size: $0.size, modified: $0.mtime)
             }
             files[0].isKeeper = true
-            result.append(DuplicateGroup(size: keeper.size, hash: hash, files: files))
+            result.append(DuplicateGroup(size: keeper.size, hash: hash, files: files,
+                                         devs: Set(confirmed.map { $0.inode.dev })))
         }
         result.sort { $0.reclaimable > $1.reclaimable }
-        return result
+        out.groups = result
+        return out
     }
 
     // MARK: private
 
-    private struct InodeKey: Hashable { let dev: Int32; let ino: UInt64 }
-    private struct Entry { let url: URL; let size: Int64; let mtime: Date; let inode: InodeKey }
-
-    private func enumerate(_ root: URL, _ emit: (Entry) -> Void) {
+    private func enumerate(_ root: URL, _ emit: (FileEntry) -> Void) {
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey,
                                          .isPackageKey, .isDirectoryKey]
         guard let en = FileManager.default.enumerator(
@@ -239,8 +308,8 @@ final class DuplicateScanner: ObservableObject {
             let name = url.lastPathComponent
             if name.hasPrefix("._") || junkNames.contains(name) { continue }
             guard let s = statOf(url.path), s.size >= minSize else { continue }
-            emit(Entry(url: url, size: s.size, mtime: s.mtime,
-                       inode: InodeKey(dev: s.dev, ino: s.ino)))
+            emit(FileEntry(url: url, size: s.size, mtime: s.mtime,
+                           inode: InodeKey(dev: s.dev, ino: s.ino)))
         }
     }
 
@@ -252,9 +321,16 @@ final class DuplicateScanner: ObservableObject {
         return (st.st_dev, st.st_ino, Int64(st.st_size), mtime)
     }
 
-    /// Ordem do keeper (menor = fica): pasta mais canônica, evita Lixeira e
+    /// Ordem do keeper (menor = fica). Primeiro critério é a política: com
+    /// `.preferVolume` a cópia do volume escolhido ganha de qualquer heurística
+    /// de pasta. Depois, o histórico: pasta mais canônica, evita Lixeira e
     /// nomes de cópia, depois mais antigo, depois caminho mais curto.
-    private func keeperRank(_ e: Entry) -> (Int, TimeInterval, Int) {
+    private func keeperRank(_ e: FileEntry, _ policy: KeeperPolicy) -> (Int, Int, TimeInterval, Int) {
+        let volumePref: Int
+        switch policy {
+        case .canonicalFolder: volumePref = 0
+        case .avoidPaths(let paths): volumePref = paths.contains(e.url.path) ? 1 : 0
+        }
         let p = e.url.path
         var rank: Int
         if p.contains("/Documents/") { rank = 0 }
@@ -265,7 +341,7 @@ final class DuplicateScanner: ObservableObject {
         if p.contains("/.Trash/") { rank += 100 }
         let n = e.url.lastPathComponent.lowercased()
         if n.contains(" copy") || n.contains("(1)") || n.contains("cópia") { rank += 10 }
-        return (rank, e.mtime.timeIntervalSince1970, p.count)
+        return (volumePref, rank, e.mtime.timeIntervalSince1970, p.count)
     }
 
     private func partialHash(_ url: URL, size: Int64) -> String {

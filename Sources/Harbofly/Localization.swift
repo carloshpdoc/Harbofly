@@ -413,6 +413,134 @@ struct L {
                  zh: "删除 \(copies)（\(size)）？每组的原件将保留。", ko: "\(copies)(\(size))을(를) 삭제할까요? 각 그룹의 원본은 유지됩니다.")
     }
     var dupVerifiedNote: String { s("Comparação por conteúdo (SHA-256 + byte a byte), não por nome. O original de cada grupo nunca é apagado.", "Compared by content (SHA-256 + byte for byte), not by name. The original of each group is never deleted.", es: "Comparación por contenido (SHA-256 + byte a byte), no por nombre. El original de cada grupo nunca se borra.", fr: "Comparaison par contenu (SHA-256 + octet par octet), pas par nom. L'original de chaque groupe n'est jamais supprimé.", de: "Vergleich nach Inhalt (SHA-256 + Byte für Byte), nicht nach Name. Das Original jeder Gruppe wird nie gelöscht.", zh: "按内容比对（SHA-256 + 逐字节），而非按文件名。每组的原件永不删除。", ko: "이름이 아니라 내용으로 비교합니다(SHA-256 + 바이트 단위). 각 그룹의 원본은 절대 삭제되지 않습니다.") }
+    // MARK: discos conectados
+    var volumesTitle: String { s("Discos", "Disks", es: "Discos", fr: "Disques", de: "Datenträger", zh: "磁盘", ko: "디스크") }
+    var volOpenWindow: String { s("Abrir Discos…", "Open Disks…", es: "Abrir Discos…", fr: "Ouvrir Disques…", de: "Datenträger öffnen…", zh: "打开磁盘…", ko: "디스크 열기…") }
+    var volReload: String { s("Reler os discos montados", "Reload mounted disks", es: "Volver a leer los discos montados", fr: "Relire les disques montés", de: "Eingebundene Datenträger neu lesen", zh: "重新读取已挂载磁盘", ko: "마운트된 디스크 다시 읽기") }
+    var volNoVolumes: String { s("Nenhum disco para mostrar. Conecte um HD externo ou pen drive.", "No disks to show. Plug in an external drive or a USB stick.", es: "Ningún disco que mostrar. Conecta un disco externo o un pendrive.", fr: "Aucun disque à afficher. Branchez un disque externe ou une clé USB.", de: "Keine Datenträger. Schließe eine externe Festplatte oder einen USB-Stick an.", zh: "没有可显示的磁盘。请接入外置硬盘或 U 盘。", ko: "표시할 디스크가 없습니다. 외장 드라이브나 USB를 연결하세요.") }
+    var volPickOne: String { s("Escolha um disco à esquerda.", "Pick a disk on the left.", es: "Elige un disco a la izquierda.", fr: "Choisissez un disque à gauche.", de: "Wähle links einen Datenträger.", zh: "请在左侧选择一个磁盘。", ko: "왼쪽에서 디스크를 선택하세요.") }
+    func volFreeOf(free: String, total: String) -> String {
+        s("\(free) livres de \(total)", "\(free) free of \(total)", es: "\(free) libres de \(total)", fr: "\(free) libres sur \(total)", de: "\(free) frei von \(total)", zh: "\(total) 中剩余 \(free)", ko: "\(total) 중 \(free) 사용 가능")
+    }
+
+    // selos do disco
+    var volBadgeBoot: String { s("sistema", "boot", es: "sistema", fr: "démarrage", de: "System", zh: "系统盘", ko: "시스템") }
+    var volBadgeExternal: String { s("externo", "external", es: "externo", fr: "externe", de: "extern", zh: "外置", ko: "외장") }
+    var volBadgeTimeMachine: String { s("Time Machine", "Time Machine", es: "Time Machine", fr: "Time Machine", de: "Time Machine", zh: "Time Machine", ko: "Time Machine") }
+    var volBadgeNetwork: String { s("rede", "network", es: "red", fr: "réseau", de: "Netzwerk", zh: "网络", ko: "네트워크") }
+    var volBadgeNoTrash: String { s("sem Lixeira", "no Trash", es: "sin Papelera", fr: "sans corbeille", de: "kein Papierkorb", zh: "无废纸篓", ko: "휴지통 없음") }
+    var volBadgeProtected: String { s("protegido", "protected", es: "protegido", fr: "protégé", de: "geschützt", zh: "受保护", ko: "보호됨") }
+
+    // modos e ações
+    var volModeInventory: String { s("O que há aqui", "What's on it", es: "Qué hay aquí", fr: "Ce qu'il contient", de: "Was darauf ist", zh: "磁盘内容", ko: "디스크 내용") }
+    var volModeCompare: String { s("Comparar com os outros", "Compare with the others", es: "Comparar con los demás", fr: "Comparer aux autres", de: "Mit den anderen vergleichen", zh: "与其他磁盘比较", ko: "다른 디스크와 비교") }
+    var volRunIndex: String { s("Ler o disco", "Read the disk", es: "Leer el disco", fr: "Lire le disque", de: "Datenträger lesen", zh: "读取磁盘", ko: "디스크 읽기") }
+    var volRunCompare: String { s("Comparar", "Compare", es: "Comparar", fr: "Comparer", de: "Vergleichen", zh: "比较", ko: "비교") }
+    func volWalking(files: Int, bytes: String) -> String {
+        let tail = bytes.isEmpty ? "" : " · \(bytes)"
+        return s("Lendo o disco… \(files) arquivos\(tail)", "Reading the disk… \(files) files\(tail)", es: "Leyendo el disco… \(files) archivos\(tail)", fr: "Lecture du disque… \(files) fichiers\(tail)", de: "Datenträger wird gelesen… \(files) Dateien\(tail)", zh: "正在读取磁盘… \(files) 个文件\(tail)", ko: "디스크 읽는 중… 파일 \(files)개\(tail)")
+    }
+
+    // avisos
+    var volProtectedNote: String { s("Disco protegido: só leitura, de rede ou destino de Time Machine. O Harbofly mede e mostra, mas não apaga nada aqui.", "Protected disk: read-only, network, or a Time Machine destination. Harbofly measures and shows it, but deletes nothing here.", es: "Disco protegido: solo lectura, de red o destino de Time Machine. Harbofly mide y muestra, pero no borra nada aquí.", fr: "Disque protégé : lecture seule, réseau ou destination Time Machine. Harbofly mesure et affiche, mais ne supprime rien ici.", de: "Geschützter Datenträger: nur Lesen, Netzwerk oder Time-Machine-Ziel. Harbofly misst und zeigt, löscht hier aber nichts.", zh: "受保护的磁盘：只读、网络或 Time Machine 备份目标。Harbofly 只测量和显示，不会在此删除任何内容。", ko: "보호된 디스크입니다: 읽기 전용, 네트워크 또는 Time Machine 대상. Harbofly는 측정하고 보여주기만 하며 여기서는 아무것도 삭제하지 않습니다.") }
+    func volNoTrashNote(_ name: String) -> String {
+        s("\(name) não tem Lixeira. Apagar aqui é definitivo — não há de onde restaurar.", "\(name) has no Trash. Deleting here is permanent — there is nothing to restore from.", es: "\(name) no tiene Papelera. Borrar aquí es definitivo: no hay desde dónde restaurar.", fr: "\(name) n'a pas de corbeille. Supprimer ici est définitif — rien à restaurer.", de: "\(name) hat keinen Papierkorb. Löschen ist hier endgültig — es gibt nichts zum Wiederherstellen.", zh: "\(name) 没有废纸篓。在此删除是永久性的——无法恢复。", ko: "\(name)에는 휴지통이 없습니다. 여기서 삭제하면 영구적이며 복원할 수 없습니다.")
+    }
+    func volSlackNote(_ size: String) -> String {
+        s("Os arquivos ocupam \(size) a mais do que somam: são milhares de arquivos pequenos num disco de cluster grande (exFAT/FAT). O espaço que você recupera é o ocupado, não a soma.", "Files take up \(size) more than they add up to: thousands of small files on a large-cluster disk (exFAT/FAT). What you get back is the allocated size, not the sum.", es: "Los archivos ocupan \(size) más de lo que suman: miles de archivos pequeños en un disco de clúster grande (exFAT/FAT). Recuperas el espacio ocupado, no la suma.", fr: "Les fichiers occupent \(size) de plus que leur somme : des milliers de petits fichiers sur un disque à gros clusters (exFAT/FAT). Vous récupérez la taille allouée, pas la somme.", de: "Die Dateien belegen \(size) mehr als ihre Summe: tausende kleine Dateien auf einem Datenträger mit großen Clustern (exFAT/FAT). Zurück bekommst du den belegten Platz, nicht die Summe.", zh: "文件占用的空间比其大小之和多 \(size)：大簇磁盘（exFAT/FAT）上有数千个小文件。能释放的是已占用空间，而非大小之和。", ko: "파일이 합계보다 \(size) 더 차지합니다: 큰 클러스터 디스크(exFAT/FAT)에 작은 파일이 수천 개 있습니다. 회수되는 공간은 할당된 크기이며 합계가 아닙니다.")
+    }
+    func volMediaRiskNote(_ n: Int) -> String {
+        s("\(n) arquivo(s) de foto ou vídeo ficariam com uma única cópia no mundo. Apagar aqui não perde nada hoje — e tira o segundo lugar onde eles existem.", "\(n) photo or video file(s) would be left with a single copy in the world. Deleting here loses nothing today — and removes the second place they exist.", es: "\(n) archivo(s) de foto o vídeo quedarían con una única copia en el mundo. Borrar aquí no pierde nada hoy, pero elimina el segundo lugar donde existen.", fr: "\(n) fichier(s) photo ou vidéo ne resteraient qu'en un seul exemplaire. Supprimer ici ne perd rien aujourd'hui — mais retire le second endroit où ils existent.", de: "\(n) Foto- oder Videodatei(en) hätten dann nur noch eine einzige Kopie. Das Löschen verliert heute nichts — nimmt aber den zweiten Ort weg, an dem sie existieren.", zh: "有 \(n) 个照片或视频文件将只剩下唯一一份副本。今天删除不会丢失任何内容——但会失去它们存在的第二个地方。", ko: "사진 또는 동영상 \(n)개가 세상에 단 하나의 사본만 남게 됩니다. 지금 삭제해도 잃는 것은 없지만, 그것들이 존재하는 두 번째 장소가 사라집니다.")
+    }
+    func volMismatchNote(_ n: Int) -> String {
+        s("\(n) arquivo(s) tinham o mesmo SHA-256 e bytes diferentes. Isso não deveria acontecer: suspeite do disco ou do cabo antes de apagar qualquer coisa.", "\(n) file(s) had the same SHA-256 but different bytes. That should not happen: suspect the disk or the cable before deleting anything.", es: "\(n) archivo(s) tenían el mismo SHA-256 y bytes diferentes. Eso no debería ocurrir: sospecha del disco o del cable antes de borrar nada.", fr: "\(n) fichier(s) avaient le même SHA-256 mais des octets différents. Cela ne devrait pas arriver : soupçonnez le disque ou le câble avant de supprimer quoi que ce soit.", de: "\(n) Datei(en) hatten denselben SHA-256, aber andere Bytes. Das darf nicht passieren: verdächtige den Datenträger oder das Kabel, bevor du etwas löschst.", zh: "有 \(n) 个文件 SHA-256 相同但字节不同。这本不应发生：删除任何东西之前，先怀疑磁盘或数据线。", ko: "파일 \(n)개가 SHA-256은 같고 바이트는 달랐습니다. 일어나면 안 되는 일입니다: 무엇이든 삭제하기 전에 디스크나 케이블을 의심하세요.")
+    }
+
+    // cortes do inventário
+    var volByFolder: String { s("Por pasta", "By folder", es: "Por carpeta", fr: "Par dossier", de: "Nach Ordner", zh: "按文件夹", ko: "폴더별") }
+    var volByExtension: String { s("Por extensão", "By extension", es: "Por extensión", fr: "Par extension", de: "Nach Erweiterung", zh: "按扩展名", ko: "확장자별") }
+    var volBySize: String { s("Por tamanho", "By size", es: "Por tamaño", fr: "Par taille", de: "Nach Größe", zh: "按大小", ko: "크기별") }
+    var volServiceAreas: String { s("Áreas de serviço do disco", "Disk service areas", es: "Áreas de servicio del disco", fr: "Zones de service du disque", de: "Service-Bereiche des Datenträgers", zh: "磁盘系统区域", ko: "디스크 서비스 영역") }
+    var volServiceAreasNote: String { s("Lixeira do Windows, índice do Spotlight e afins. Aparecem com tamanho e nunca entram em seleção: num disco meu, o $RECYCLE.BIN guardava 4,24 GB de trabalho que não existia em nenhum outro lugar.", "Windows Recycle Bin, Spotlight index and the like. They show their size and never enter a selection: on a disk of mine, $RECYCLE.BIN held 4.24 GB of work that existed nowhere else.", es: "Papelera de Windows, índice de Spotlight y similares. Muestran su tamaño y nunca entran en la selección: en un disco mío, $RECYCLE.BIN guardaba 4,24 GB de trabajo que no existía en ningún otro sitio.", fr: "Corbeille Windows, index Spotlight et similaires. Leur taille est affichée et elles n'entrent jamais dans une sélection : sur un de mes disques, $RECYCLE.BIN contenait 4,24 Go de travail qui n'existait nulle part ailleurs.", de: "Windows-Papierkorb, Spotlight-Index und Ähnliches. Sie zeigen ihre Größe und kommen nie in eine Auswahl: auf einem meiner Datenträger lagen im $RECYCLE.BIN 4,24 GB Arbeit, die es nirgends sonst gab.", zh: "Windows 回收站、Spotlight 索引之类。只显示大小，永不参与选择：我的一个磁盘上，$RECYCLE.BIN 里存着 4.24 GB 别处都没有的工作成果。", ko: "Windows 휴지통, Spotlight 색인 등입니다. 크기만 표시되고 선택에는 포함되지 않습니다: 제 디스크에서는 $RECYCLE.BIN에 다른 어디에도 없는 4.24 GB의 작업물이 있었습니다.") }
+    var volInventoryIntro: String { s("Leia o disco para ver quanto cada pasta e cada tipo de arquivo ocupa — e quantos arquivos ficaram de fora da conta, com o motivo.", "Read the disk to see how much each folder and each file type takes — and how many files were left out of the count, with the reason.", es: "Lee el disco para ver cuánto ocupa cada carpeta y cada tipo de archivo, y cuántos archivos quedaron fuera de la cuenta, con el motivo.", fr: "Lisez le disque pour voir ce que prend chaque dossier et chaque type de fichier — et combien de fichiers sont restés hors du compte, avec la raison.", de: "Lies den Datenträger, um zu sehen, wie viel jeder Ordner und jeder Dateityp belegt — und wie viele Dateien aus der Rechnung fielen, mit Grund.", zh: "读取磁盘，查看每个文件夹和每种文件类型占用多少空间——以及有多少文件未计入，原因为何。", ko: "디스크를 읽어 각 폴더와 파일 종류가 차지하는 용량을, 그리고 집계에서 빠진 파일 수와 그 이유를 확인하세요.") }
+
+    // células da barra de prova
+    var volCellFiles: String { s("arquivos", "files", es: "archivos", fr: "fichiers", de: "Dateien", zh: "文件", ko: "파일") }
+    var volCellSpace: String { s("ocupado", "allocated", es: "ocupado", fr: "occupé", de: "belegt", zh: "已占用", ko: "할당됨") }
+    var volCellSkipped: String { s("fora da conta", "skipped", es: "fuera de la cuenta", fr: "écartés", de: "übersprungen", zh: "已跳过", ko: "제외됨") }
+    var volCellErrors: String { s("erros", "errors", es: "errores", fr: "erreurs", de: "Fehler", zh: "错误", ko: "오류") }
+    var volCellCoverage: String { s("cobertura", "coverage", es: "cobertura", fr: "couverture", de: "Abdeckung", zh: "覆盖", ko: "커버리지") }
+    var volCellShared: String { s("já está em outro disco", "already on another disk", es: "ya está en otro disco", fr: "déjà sur un autre disque", de: "schon auf anderem Datenträger", zh: "已在其他磁盘", ko: "다른 디스크에 있음") }
+    var volCellInternal: String { s("repetido aqui dentro", "repeated inside this one", es: "repetido aquí dentro", fr: "répété à l'intérieur", de: "hier drin wiederholt", zh: "本盘内重复", ko: "이 디스크 내 중복") }
+    var volCellOnlyHere: String { s("só existe aqui", "only here", es: "solo existe aquí", fr: "seulement ici", de: "nur hier", zh: "仅存于此", ko: "여기에만 있음") }
+    var volCoverageOK: String { s("fecha", "closes", es: "cuadra", fr: "exacte", de: "stimmt", zh: "吻合", ko: "일치") }
+    var volCoverageFailed: String { s("NÃO FECHA", "FAILED", es: "NO CUADRA", fr: "ÉCHEC", de: "FEHLT", zh: "不吻合", ko: "불일치") }
+    func volCoverageLine(indexed: Int, skipped: Int, errors: Int, visited: Int) -> String {
+        s("\(indexed) contados + \(skipped) fora + \(errors) com erro = \(visited) visitados",
+          "\(indexed) counted + \(skipped) skipped + \(errors) failed = \(visited) visited",
+          es: "\(indexed) contados + \(skipped) fuera + \(errors) con error = \(visited) visitados",
+          fr: "\(indexed) comptés + \(skipped) écartés + \(errors) en erreur = \(visited) visités",
+          de: "\(indexed) gezählt + \(skipped) übersprungen + \(errors) fehlerhaft = \(visited) besucht",
+          zh: "\(indexed) 已计入 + \(skipped) 已跳过 + \(errors) 出错 = \(visited) 已访问",
+          ko: "\(indexed)개 집계 + \(skipped)개 제외 + \(errors)개 오류 = \(visited)개 방문")
+    }
+    /// Rótulo de um motivo de descarte (`SkipReason`/`IndexError`).
+    func volSkipReason(_ key: String) -> String {
+        switch key {
+        case "appleDouble": return s("artefatos do macOS", "macOS artifacts", es: "artefactos de macOS", fr: "artefacts macOS", de: "macOS-Artefakte", zh: "macOS 残留文件", ko: "macOS 부산물")
+        case "junk": return s("lixo", "junk", es: "basura", fr: "déchets", de: "Müll", zh: "杂项", ko: "잡동사니")
+        case "symlink": return s("atalhos", "symlinks", es: "enlaces", fr: "liens", de: "Symlinks", zh: "符号链接", ko: "심볼릭 링크")
+        case "package": return s("pacotes", "packages", es: "paquetes", fr: "paquets", de: "Pakete", zh: "程序包", ko: "패키지")
+        case "tooSmall": return s("muito pequenos", "too small", es: "muy pequeños", fr: "trop petits", de: "zu klein", zh: "过小", ko: "너무 작음")
+        case "volumeMetadata": return s("áreas de serviço", "service areas", es: "áreas de servicio", fr: "zones de service", de: "Service-Bereiche", zh: "系统区域", ko: "서비스 영역")
+        case "stat": return s("sem permissão de leitura", "unreadable", es: "sin permiso de lectura", fr: "illisibles", de: "nicht lesbar", zh: "无法读取", ko: "읽을 수 없음")
+        case "enumerator": return s("erro na varredura", "walk error", es: "error en el recorrido", fr: "erreur de parcours", de: "Fehler beim Durchlauf", zh: "遍历出错", ko: "탐색 오류")
+        default: return key
+        }
+    }
+
+    // comparação
+    var volCompareIntro: String { s("Compare este disco com os outros montados para ver o que já existe em outro lugar, o que está repetido aqui dentro, e o que só existe aqui. Nada é apagado sem você confirmar.", "Compare this disk with the other mounted ones to see what already exists elsewhere, what repeats inside it, and what only exists here. Nothing is deleted without your confirmation.", es: "Compara este disco con los otros montados para ver qué ya existe en otro sitio, qué se repite aquí dentro y qué solo existe aquí. Nada se borra sin tu confirmación.", fr: "Comparez ce disque aux autres disques montés pour voir ce qui existe déjà ailleurs, ce qui se répète à l'intérieur, et ce qui n'existe qu'ici. Rien n'est supprimé sans votre confirmation.", de: "Vergleiche diesen Datenträger mit den anderen eingebundenen, um zu sehen, was schon woanders liegt, was sich hier drin wiederholt und was nur hier existiert. Nichts wird ohne deine Bestätigung gelöscht.", zh: "将此磁盘与其他已挂载磁盘比较，看看哪些内容别处已有、哪些在本盘内重复、哪些仅存于此。未经你确认不会删除任何内容。", ko: "이 디스크를 마운트된 다른 디스크와 비교해 다른 곳에 이미 있는 것, 이 디스크 안에서 중복된 것, 여기에만 있는 것을 확인하세요. 확인 없이는 아무것도 삭제되지 않습니다.") }
+    var volVerifiedNote: String { s("Igualdade provada byte a byte entre os discos, não por nome nem por tamanho.", "Sameness proven byte for byte across the disks, not by name or size.", es: "Igualdad probada byte a byte entre los discos, no por nombre ni por tamaño.", fr: "Égalité prouvée octet par octet entre les disques, pas par nom ni par taille.", de: "Gleichheit Byte für Byte über die Datenträger bewiesen, nicht über Name oder Größe.", zh: "跨磁盘逐字节证明内容一致，而非按文件名或大小判断。", ko: "디스크 간 동일성을 이름이나 크기가 아니라 바이트 단위로 입증했습니다.") }
+    func volSubtrees(_ n: Int, _ size: String) -> String {
+        s("\(n) pasta(s) duplicada(s) por inteiro — \(size)", "\(n) folder(s) fully duplicated — \(size)", es: "\(n) carpeta(s) duplicada(s) por completo — \(size)", fr: "\(n) dossier(s) entièrement dupliqué(s) — \(size)", de: "\(n) Ordner vollständig doppelt — \(size)", zh: "\(n) 个文件夹完全重复——\(size)", ko: "폴더 \(n)개가 전체 중복 — \(size)")
+    }
+    var volShowInternal: String { s("incluir o que repete aqui dentro", "include what repeats inside", es: "incluir lo que se repite aquí dentro", fr: "inclure ce qui se répète ici", de: "auch hier drin Wiederholtes zeigen", zh: "包含本盘内的重复", ko: "이 디스크 내 중복 포함") }
+    var volSearch: String { s("Buscar no caminho", "Search the path", es: "Buscar en la ruta", fr: "Rechercher dans le chemin", de: "Im Pfad suchen", zh: "搜索路径", ko: "경로 검색") }
+    func volMinSize(_ mb: Int) -> String {
+        mb == 0 ? s("todos os tamanhos", "any size", es: "todos los tamaños", fr: "toutes tailles", de: "jede Größe", zh: "全部大小", ko: "모든 크기")
+                : s("a partir de \(mb) MB", "from \(mb) MB", es: "desde \(mb) MB", fr: "à partir de \(mb) Mo", de: "ab \(mb) MB", zh: "\(mb) MB 起", ko: "\(mb) MB 이상")
+    }
+    var volClearFilters: String { s("limpar filtros", "clear filters", es: "limpiar filtros", fr: "effacer les filtres", de: "Filter löschen", zh: "清除筛选", ko: "필터 지우기") }
+    var volExportCSV: String { s("Exportar CSV", "Export CSV", es: "Exportar CSV", fr: "Exporter en CSV", de: "CSV exportieren", zh: "导出 CSV", ko: "CSV 내보내기") }
+    var volBreakdown: String { s("Onde está o volume", "Where the bulk is", es: "Dónde está el volumen", fr: "Où se trouve le volume", de: "Wo die Masse liegt", zh: "空间分布", ko: "용량 분포") }
+    var volNoExtension: String { s("(sem extensão)", "(no extension)", es: "(sin extensión)", fr: "(sans extension)", de: "(ohne Endung)", zh: "（无扩展名）", ko: "(확장자 없음)") }
+    var volColPath: String { s("Caminho", "Path", es: "Ruta", fr: "Chemin", de: "Pfad", zh: "路径", ko: "경로") }
+    var volColSize: String { s("Tamanho", "Size", es: "Tamaño", fr: "Taille", de: "Größe", zh: "大小", ko: "크기") }
+    var volColCopies: String { s("Cópias", "Copies", es: "Copias", fr: "Copies", de: "Kopien", zh: "份数", ko: "사본") }
+    var volColKeeper: String { s("Fica em", "Stays on", es: "Se queda en", fr: "Reste sur", de: "Bleibt auf", zh: "保留于", ko: "남는 위치") }
+    var volColModified: String { s("Modificado", "Modified", es: "Modificado", fr: "Modifié", de: "Geändert", zh: "修改时间", ko: "수정") }
+    var volRowAtRisk: String { s("Única outra cópia de uma foto ou vídeo.", "The only other copy of a photo or video.", es: "La única otra copia de una foto o vídeo.", fr: "La seule autre copie d'une photo ou vidéo.", de: "Die einzige weitere Kopie eines Fotos oder Videos.", zh: "某张照片或视频仅有的另一份副本。", ko: "사진 또는 동영상의 유일한 다른 사본입니다.") }
+    func volRowCount(shown: Int, total: Int) -> String {
+        shown == total ? s("\(total) arquivo(s)", "\(total) file(s)", es: "\(total) archivo(s)", fr: "\(total) fichier(s)", de: "\(total) Datei(en)", zh: "\(total) 个文件", ko: "파일 \(total)개")
+                       : s("\(shown) de \(total) arquivo(s)", "\(shown) of \(total) file(s)", es: "\(shown) de \(total) archivo(s)", fr: "\(shown) sur \(total) fichier(s)", de: "\(shown) von \(total) Datei(en)", zh: "\(total) 个文件中的 \(shown) 个", ko: "파일 \(total)개 중 \(shown)개")
+    }
+    func volFilesCount(_ n: Int) -> String {
+        s("\(n) arq.", "\(n) file(s)", es: "\(n) arch.", fr: "\(n) fich.", de: "\(n) Dat.", zh: "\(n) 个", ko: "\(n)개")
+    }
+    func volMoreRows(_ n: Int) -> String {
+        s("+\(n) linhas", "+\(n) more", es: "+\(n) líneas", fr: "+\(n) lignes", de: "+\(n) weitere", zh: "还有 \(n) 行", ko: "\(n)개 더")
+    }
+    func volConfirmTitle(count: Int, size: String) -> String {
+        s("Apagar \(count) arquivo(s) e liberar \(size)?", "Delete \(count) file(s) and free \(size)?", es: "¿Borrar \(count) archivo(s) y liberar \(size)?", fr: "Supprimer \(count) fichier(s) et libérer \(size) ?", de: "\(count) Datei(en) löschen und \(size) freigeben?", zh: "删除 \(count) 个文件并释放 \(size)？", ko: "파일 \(count)개를 삭제하고 \(size)를 확보할까요?")
+    }
+    func volConfirmRisk(_ n: Int) -> String {
+        s("\(n) deles são a única outra cópia de uma foto ou vídeo.", "\(n) of them are the only other copy of a photo or video.", es: "\(n) de ellos son la única otra copia de una foto o vídeo.", fr: "\(n) d'entre eux sont la seule autre copie d'une photo ou vidéo.", de: "\(n) davon sind die einzige weitere Kopie eines Fotos oder Videos.", zh: "其中 \(n) 个是某张照片或视频仅有的另一份副本。", ko: "그중 \(n)개는 사진 또는 동영상의 유일한 다른 사본입니다.")
+    }
+    func volConfirmNoTrash(_ name: String) -> String {
+        s("\(name) não tem Lixeira: a remoção é definitiva.", "\(name) has no Trash: removal is permanent.", es: "\(name) no tiene Papelera: la eliminación es definitiva.", fr: "\(name) n'a pas de corbeille : la suppression est définitive.", de: "\(name) hat keinen Papierkorb: das Entfernen ist endgültig.", zh: "\(name) 没有废纸篓：删除是永久性的。", ko: "\(name)에는 휴지통이 없습니다: 삭제는 영구적입니다.")
+    }
+
     func dupPhaseText(_ phase: DupPhase) -> String {
         let body: String
         switch phase {

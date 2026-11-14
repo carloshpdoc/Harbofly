@@ -174,6 +174,26 @@ enum Analytics {
                floatValue: gb(freedBytes))
     }
 
+    // MARK: discos conectados
+    /// Inventário de um volume. `fsType` é o tipo do filesystem ("exfat",
+    /// "apfs"…) — genérico como a categoria do CleanTarget, nunca o nome do
+    /// disco nem caminho.
+    static func volumeIndexed(files: Int, bytes: Int64, fsType: String, durationMs: Int) {
+        guard enabled else { return }
+        signal("volume_indexed",
+               parameters: ["fs": fsType],
+               metrics: ["files": Double(files), "duration_ms": Double(durationMs)],
+               floatValue: gb(bytes))
+    }
+    /// Comparação entre volumes: quantos grupos cruzam discos e quanto daria
+    /// para liberar no volume escolhido.
+    static func crossVolumeScanned(groups: Int, reclaimableBytes: Int64, durationMs: Int) {
+        guard enabled else { return }
+        signal("crossvolume_scanned",
+               metrics: ["groups": Double(groups), "duration_ms": Double(durationMs)],
+               floatValue: gb(reclaimableBytes))
+    }
+
     /// Falhas (item 6): "delete" | "dockerPrune" | "feedback" | "duplicates".
     /// `reason` (opcional): rótulo genérico do motivo — ex.: "notFound" |
     /// "permission" | "busy" | "other" — nunca caminho/nome, só pra diagnosticar

@@ -19,6 +19,7 @@ struct DuplicatesView: View {
 
     @AppStorage(Prefs.deletePermanently) private var deletePermanently = false
     @AppStorage(Prefs.language) private var language = "system"
+    @Environment(\.openWindow) private var openWindow
 
     private static func defaultRoots() -> [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -74,6 +75,15 @@ struct DuplicatesView: View {
                 Text(L10n.dupTitle).font(.headline)
                 Spacer()
                 if scanner.scanning || scanner.deleting { ProgressView().controlSize(.small) }
+                // Este painel olha pastas da pasta pessoal. Disco externo, pen
+                // drive e comparação entre discos vivem na janela "Discos".
+                Button {
+                    presentVolumesWindow(using: openWindow)
+                } label: {
+                    Label(L10n.volumesTitle, systemImage: "externaldrive")
+                        .font(.caption)
+                }
+                .help(L10n.volOpenWindow)
             }
             HStack {
                 Text(L10n.dupVerifiedNote)

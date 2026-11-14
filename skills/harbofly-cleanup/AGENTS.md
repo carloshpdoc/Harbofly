@@ -14,6 +14,19 @@ the installed version.
   (recoverable). It never touches 🟡 caution or 🔵 info tiers, and it skips
   Docker. Only `dups --permanent` deletes without the Trash — treat that as
   destructive.
+- On a connected disk, `compare --apply` removes **only** files proven byte for
+  byte to exist on another volume, with the surviving copy outside the target. It
+  refuses read-only, network and Time Machine volumes, and re-checks size and
+  mtime right before each removal, skipping whatever changed since the scan.
+- Some disks have **no Trash** (`"trash": false` in `harbofly volumes --json`).
+  There, removal is permanent even without `--permanent`. Say so first.
+- Before trusting any count, check `coverageOK` and `hashErrors` in the JSON. If
+  coverage is false or there are hash errors, files were not accounted for —
+  report that instead of presenting the numbers as complete. `verifyMismatches`
+  above zero means same hash with different bytes: stop, and tell the user to
+  suspect the disk or the cable.
+- `mediaAtRisk` counts photo/video files whose only other copy is the one being
+  deleted. Always surface it. Never delete anything from the `only here` bucket.
 
 ## Interactive use
 
@@ -30,12 +43,39 @@ Never run a real `clean`, `dups --apply`, or `dups --permanent` without a
 dry-run preview and confirmation — unless the user has explicitly set up
 unattended cleanup (below).
 
+## Connected-disk workflow
+
+For an external drive, a USB stick or any mounted volume:
+
+1. **List** what is attached: `harbofly volumes --json`. Skip anything whose
+   `tier` is not `scannable`.
+2. **Read** the disk: `harbofly index "<path>" --json`. Check `coverageOK`
+   first, then report where the bulk is (`byFolder`, `byExtension`) and the gap
+   between `bytesLogical` and `bytesAllocated` if it is large.
+3. **Compare** against the others: `harbofly compare "<path>" --json`.
+   Report the three buckets separately — already elsewhere / repeated inside /
+   only here — and never blur them together.
+4. **Surface the risks**: `mediaAtRisk`, a `trash: false` disk, and
+   `uniqueBytes` (what a migration must carry).
+5. **Confirm**, then `compare "<path>" --apply`. Prefer `--subtrees` in the
+   preview so whole duplicated folders read as one decision instead of hundreds.
+
 ## Commands
 
 ```
 harbofly scan  [--json]
 harbofly clean [--dry-run] [--stale-only]
 harbofly dups  [folders...] [--apply] [--permanent] [--json]
+harbofly volumes [--json]               list mounted disks (size, free, fs, flags)
+                 [--all]                …including read-only ones (mounted .dmg)
+harbofly index <path> [--json]          inventory of a disk or folder: coverage,
+                                        space, by folder/extension/size
+harbofly compare <vol> [other…]         what on <vol> already exists elsewhere,
+                 [--subtrees]           what repeats inside it, what is only there
+                 [--only-unique]        no other volume given = all mounted ones
+                 [--apply]              removes ONLY what was proven to exist
+                 [--permanent]          elsewhere (destructive without Trash)
+                 [--json]
 harbofly version
 ```
 

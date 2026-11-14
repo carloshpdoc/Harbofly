@@ -18,6 +18,19 @@ enum CLI {
                         apply: args.contains("--apply"),
                         permanent: args.contains("--permanent"),
                         json: args.contains("--json"))
+        case "volumes", "disks":
+            return volumes(json: args.contains("--json"), all: args.contains("--all"))
+        case "index":
+            let paths = args.dropFirst().filter { !$0.hasPrefix("-") }
+            return index(paths: Array(paths), json: args.contains("--json"))
+        case "compare":
+            let paths = args.dropFirst().filter { !$0.hasPrefix("-") }
+            return compare(paths: Array(paths),
+                           apply: args.contains("--apply"),
+                           permanent: args.contains("--permanent"),
+                           subtrees: args.contains("--subtrees"),
+                           onlyUnique: args.contains("--only-unique"),
+                           json: args.contains("--json"))
         case "version", "--version":
             print("\(AppInfo.name) \(AppInfo.version) (build \(AppInfo.build))")
             return 0
@@ -178,6 +191,269 @@ enum CLI {
         return 0
     }
 
+    // MARK: discos conectados
+
+    /// Volumes montados que valem mostrar. É o mesmo filtro da UI: o que o
+    /// Finder esconde (nobrowse, /System/Volumes/*, DMG de instalador) fica fora.
+    private static func volumes(json: Bool, all: Bool) -> Int32 {
+        let list = Volumes.mounted(includingReadOnly: all)
+        if json {
+            let rows: [[String: Any]] = list.map { v in
+                ["name": v.name, "path": v.url.path, "fs": v.fsType,
+                 "totalBytes": v.total, "freeBytes": v.free,
+                 "tier": tierName(v.tier), "internal": v.isInternal,
+                 "removable": v.isRemovable, "readOnly": v.isReadOnly,
+                 "timeMachine": v.isTimeMachine, "trash": v.trashSupported]
+            }
+            return emitJSON(["volumes": rows])
+        }
+        guard !list.isEmpty else { print("No volumes."); return 0 }
+        print("\(AppInfo.name) \(AppInfo.version) — mounted volumes\n")
+        for v in list {
+            print("\(pad(fmt(v.total)))  \(pad(fmt(v.free))) free  \(padR(v.fsType, 6))  \(v.name)")
+            print("           \(v.url.path)  [\(flags(v).joined(separator: ", "))]")
+        }
+        return 0
+    }
+
+    private static func flags(_ v: MountedVolume) -> [String] {
+        var f: [String] = []
+        f.append(v.isRoot ? "boot" : (v.isInternal ? "internal" : "external"))
+        if v.isRemovable { f.append("removable") }
+        if v.isReadOnly { f.append("read-only") }
+        if v.isTimeMachine { f.append("Time Machine") }
+        if !v.isLocal { f.append("network") }
+        f.append(v.trashSupported ? "trash" : "NO TRASH")
+        if !v.tier.canDelete { f.append("protected") }
+        return f
+    }
+
+    /// Inventário de um volume: cobertura, espaço, e os cortes por pasta,
+    /// extensão e faixa de tamanho.
+    private static func index(paths: [String], json: Bool) -> Int32 {
+        guard let root = resolveOne(paths) else { return 64 }
+        let indexer = VolumeIndexer()
+        if !json { FileHandle.standardError.write(Data("Walking \(root.path)…\n".utf8)) }
+        let (inv, _) = indexer.walk(root: root) { n, bytes in
+            guard !json, n % 20_000 == 0 else { return }
+            FileHandle.standardError.write(Data("\r\(n) files, \(fmt(bytes))   ".utf8))
+        }
+        if !json { FileHandle.standardError.write(Data("\n".utf8)) }
+
+        if json {
+            return emitJSON([
+                "root": root.path,
+                "enumerated": inv.enumerated, "indexed": inv.indexed,
+                "skipped": inv.skipped, "errors": inv.errors,
+                "coverageOK": inv.coverageOK,
+                "bytesLogical": inv.bytesLogical, "bytesAllocated": inv.bytesAllocated,
+                "durationMs": inv.durationMs,
+                "byFolder": inv.byFolder.map { ["name": $0.name, "files": $0.files, "bytes": $0.bytes] },
+                "byExtension": inv.byExtension.map { ["name": $0.name, "files": $0.files, "bytes": $0.bytes] },
+                "bySize": inv.bySizeBucket.map { ["name": $0.name, "files": $0.files, "bytes": $0.bytes] },
+                "metadata": inv.metadata.map { ["name": $0.name, "bytes": $0.bytes] },
+            ])
+        }
+
+        let fs = Volumes.fsType(at: root.path)
+        print("\(AppInfo.name) \(AppInfo.version) — index of \(root.path) (\(fs))\n")
+        printCoverage(inv)
+        print("")
+        printStats("by folder", inv.byFolder, limit: 12)
+        printStats("by extension", inv.byExtension, limit: 12)
+        printStats("by size", inv.bySizeBucket, limit: 0)
+        if !inv.metadata.isEmpty {
+            print("volume service areas (never deletion candidates):")
+            for m in inv.metadata { print("  \(pad(fmt(m.bytes)))  \(m.name)") }
+            print("")
+        }
+        return inv.coverageOK ? 0 : 65   // EX_DATAERR: a conta não fechou
+    }
+
+    /// Compara um volume contra os outros montados: o que já existe em outro
+    /// disco, o que está duplicado aqui dentro, e o que só existe aqui.
+    private static func compare(paths: [String], apply: Bool, permanent: Bool,
+                                subtrees: Bool, onlyUnique: Bool, json: Bool) -> Int32 {
+        let all = Volumes.mounted()
+        guard let targetPath = paths.first else {
+            FileHandle.standardError.write(Data("Usage: harbofly compare <volume> [other…]\n".utf8))
+            return 64
+        }
+        guard let target = volume(at: targetPath, in: all) else {
+            FileHandle.standardError.write(Data("Not a volume or folder: \(targetPath)\n".utf8))
+            return 64
+        }
+        let others: [MountedVolume]
+        if paths.count > 1 {
+            others = paths.dropFirst().compactMap { volume(at: $0, in: all) }
+        } else if target.isSynthetic {
+            // Alvo é uma pasta: comparar contra "todos os volumes" significaria
+            // varrer o disco de boot inteiro por causa de um argumento que
+            // parecia modesto. Quem compara pasta diz contra o quê.
+            let msg = """
+            \(targetPath) is a folder, not a volume — name the other side too:
+              harbofly compare \(targetPath) <other-folder-or-volume>
+
+            """
+            FileHandle.standardError.write(Data(msg.utf8))
+            return 64
+        } else {
+            // Alvo é um volume: comparar contra os outros montados é o ponto.
+            others = all.filter { $0.id != target.id && $0.isLocal }
+        }
+        guard !others.isEmpty else {
+            FileHandle.standardError.write(Data("No other volume to compare against.\n".utf8))
+            return 64
+        }
+
+        let scanner = CrossVolumeScanner()
+        let r = scanner.compare(target: target, others: others,
+                                phase: { if !json { dupProgress($0) } },
+                                walked: { n in
+            guard !json, n % 20_000 == 0 else { return }
+            FileHandle.standardError.write(Data("\rWalking… \(n) files   ".utf8))
+        })
+
+        if json {
+            return emitJSON([
+                "target": target.url.path,
+                "others": others.map { $0.url.path },
+                "indexedTarget": r.indexedTarget, "indexedOthers": r.indexedOthers,
+                "coverageOK": r.coverageOK, "hashErrors": r.hashErrors,
+                "verifyMismatches": r.verifyMismatches, "durationMs": r.durationMs,
+                "sharedFiles": r.shared.count, "sharedBytes": r.sharedBytes,
+                "internalFiles": r.internalDupes.count, "internalBytes": r.internalBytes,
+                "uniqueFiles": r.uniqueFiles, "uniqueBytes": r.uniqueBytes,
+                "mediaAtRisk": r.mediaAtRisk.count,
+                "subtrees": r.subtrees.map { ["path": $0.url.path, "files": $0.files, "bytes": $0.bytes] },
+                "shared": r.shared.prefix(5000).map {
+                    ["path": $0.url.path, "bytes": $0.size, "sha256": $0.hash,
+                     "keeper": $0.keeperURL.path, "keeperVolume": $0.keeperVolume,
+                     "copies": $0.copies, "lastBackupOfMedia": $0.lastBackupOfMedia]
+                },
+            ])
+        }
+
+        print("\n\(AppInfo.name) \(AppInfo.version) — \(target.name) vs \(others.map { $0.name }.joined(separator: ", "))\n")
+        print("indexed:  \(r.indexedTarget) here, \(r.indexedOthers) elsewhere")
+        print("coverage: \(r.coverageOK ? "OK" : "FAILED — some files were not accounted for")"
+              + "  hash errors: \(r.hashErrors)"
+              + (r.verifyMismatches > 0 ? "  VERIFY MISMATCHES: \(r.verifyMismatches)" : ""))
+        print("")
+        // Rótulos de largura fixa: o nome do alvo no meio da coluna desalinhava
+        // a tabela, e `compare` também aceita pasta, onde "volume" seria errado.
+        print("  already elsewhere  : \(pad(fmt(r.sharedBytes)))  \(r.shared.count) file(s)")
+        print("  duplicated inside  : \(pad(fmt(r.internalBytes)))  \(r.internalDupes.count) file(s)")
+        print("  only here          : \(pad(fmt(r.uniqueBytes)))  \(r.uniqueFiles) file(s)")
+        if !r.mediaAtRisk.isEmpty {
+            print("\n  ⚠︎  \(r.mediaAtRisk.count) media file(s) would be left with a single copy.")
+        }
+        if !target.trashSupported {
+            print("  ⚠︎  \(target.name) has no Trash — deleting there is permanent.")
+        }
+
+        if subtrees && !r.subtrees.isEmpty {
+            print("\nfolders fully duplicated elsewhere:")
+            for s in r.subtrees.prefix(40) {
+                print("  \(pad(fmt(s.bytes)))  \(s.files) file(s)  \(s.url.path)")
+            }
+        }
+        if onlyUnique {
+            print("\n(only-here listing is a count here; use the Disks window or --json for the list.)")
+        }
+
+        guard apply else {
+            print("\n(dry-run — pass --apply to remove what already exists on another volume.)")
+            return 0
+        }
+        guard target.tier.canDelete else {
+            FileHandle.standardError.write(Data("\(target.name) is protected (read-only, network or Time Machine).\n".utf8))
+            return 77 // EX_NOPERM
+        }
+        var freed: Int64 = 0, n = 0, skipped = 0
+        for row in r.shared {
+            guard stillMatches(row) else { skipped += 1; continue }
+            let ok = permanent
+                ? (try? FileManager.default.removeItem(at: row.url)) != nil
+                : (try? FileManager.default.trashItem(at: row.url, resultingItemURL: nil)) != nil
+            if ok { freed += row.size; n += 1 } else { skipped += 1 }
+        }
+        CleanLog.record(bytes: freed, count: n, byCategory: ["crossvolume": freed])
+        print(permanent
+              ? "\nDeleted \(n) file(s), freed \(fmt(freed))."
+              : "\nMoved \(n) file(s) to the Trash, freed \(fmt(freed)) (recoverable).")
+        if skipped > 0 { print("skipped \(skipped) file(s) that changed since the scan or could not be removed.") }
+        let (free, total) = Volumes.space(at: target.url.path)
+        print("\(target.name): \(fmt(free)) free of \(fmt(total)).")
+        return 0
+    }
+
+    /// O arquivo ainda é o que foi provado idêntico? Entre a varredura e a
+    /// remoção ele pode ter mudado — aí não é mais o mesmo arquivo.
+    private static func stillMatches(_ r: CrossVolumeRow) -> Bool {
+        var st = stat()
+        guard lstat(r.url.path, &st) == 0, Int64(st.st_size) == r.size else { return false }
+        let mtime = Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1e9
+        return abs(mtime - r.modified.timeIntervalSince1970) < 1
+    }
+
+    private static func printCoverage(_ inv: VolumeInventory) {
+        let skips = inv.skipped.sorted { $0.value > $1.value }
+            .map { "\($0.key) \($0.value)" }.joined(separator: ", ")
+        let errs = inv.errors.sorted { $0.value > $1.value }
+            .map { "\($0.key) \($0.value)" }.joined(separator: ", ")
+        print("coverage: \(inv.indexed) indexed + \(inv.skippedTotal) skipped + \(inv.errorsTotal) errors"
+              + " = \(inv.enumerated) visited  \(inv.coverageOK ? "OK" : "FAILED")")
+        if !skips.isEmpty { print("  skipped:  \(skips)") }
+        if !errs.isEmpty { print("  errors:   \(errs)") }
+        var line = "bytes:    \(fmt(inv.bytesLogical)) logical / \(fmt(inv.bytesAllocated)) allocated"
+        if inv.slackIsRelevant { line += "  (cluster slack \(fmt(inv.slackBytes)))" }
+        print(line)
+        print("time:     \(inv.durationMs) ms")
+    }
+
+    private static func printStats(_ title: String, _ rows: [NamedStat], limit: Int) {
+        guard !rows.isEmpty else { return }
+        print("\(title):")
+        let shown = limit > 0 ? Array(rows.prefix(limit)) : rows
+        for r in shown { print("  \(pad(fmt(r.bytes)))  \(pad("\(r.files)")) file(s)  \(r.name)") }
+        if limit > 0 && rows.count > limit { print("  … \(rows.count - limit) more") }
+        print("")
+    }
+
+    private static func resolveOne(_ paths: [String]) -> URL? {
+        guard let first = paths.first else {
+            FileHandle.standardError.write(Data("Usage: harbofly index <path>\n".utf8))
+            return nil
+        }
+        let url = URL(fileURLWithPath: (first as NSString).expandingTildeInPath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            FileHandle.standardError.write(Data("No such path: \(url.path)\n".utf8))
+            return nil
+        }
+        return url
+    }
+
+    /// Resolve o argumento num escopo de comparação: ponto de montagem, nome de
+    /// volume ("T7 Shield"), ou uma pasta qualquer — comparar duas pastas é
+    /// legítimo e é o mesmo motor, só com o escopo definido por caminho.
+    private static func volume(at path: String, in list: [MountedVolume]) -> MountedVolume? {
+        let p = (path as NSString).expandingTildeInPath
+        if let exact = list.first(where: { $0.url.path == p }) { return exact }
+        if let byName = list.first(where: { $0.name == path }) { return byName }
+        return Volumes.scope(forFolder: URL(fileURLWithPath: p), in: list)
+    }
+
+    private static func emitJSON(_ payload: [String: Any]) -> Int32 {
+        guard let data = try? JSONSerialization.data(withJSONObject: payload,
+                                                     options: [.prettyPrinted, .sortedKeys]) else {
+            FileHandle.standardError.write(Data("Could not serialize output.\n".utf8))
+            return 70 // EX_SOFTWARE
+        }
+        print(String(data: data, encoding: .utf8) ?? "{}")
+        return 0
+    }
+
     private static func printHelp() {
         print("""
         \(AppInfo.name) \(AppInfo.version) — dev disk cleaner (CLI mode)
@@ -190,10 +466,21 @@ enum CLI {
                         [--apply]          + byte-verify); --apply trashes non-keepers
                         [--permanent]      delete instead of Trash
                         [--json]           no folders = Downloads/Documents/Desktop/Pictures
+          harbofly volumes [--json]        list mounted volumes (size, free, fs, flags)
+                        [--all]            include read-only ones (mounted .dmg)
+          harbofly index <path> [--json]   inventory: coverage, space, by folder/ext/size
+          harbofly compare <vol> [other…]  what on <vol> already exists on another
+                        [--subtrees]       volume, what repeats inside it, what is
+                        [--only-unique]    only there. No other volume given = all
+                        [--apply]          mounted ones. --apply removes only what
+                        [--permanent]      was proven to exist elsewhere.
+                        [--json]
           harbofly version                 print version
 
         Everything goes to the Trash (recoverable). 🟡 caution and 🔵 info tiers
-        are never touched by the CLI — use the app for those.
+        are never touched by the CLI — use the app for those. `compare` refuses
+        read-only, network and Time Machine volumes, and says so when a volume
+        has no Trash.
         """)
     }
 
@@ -233,5 +520,16 @@ enum CLI {
     }
     private static func pad(_ s: String) -> String {
         s.count >= 9 ? s : String(repeating: " ", count: 9 - s.count) + s
+    }
+    /// Preenche à direita (colunas de texto, ao contrário dos tamanhos).
+    private static func padR(_ s: String, _ width: Int) -> String {
+        s.count >= width ? s : s + String(repeating: " ", count: width - s.count)
+    }
+    private static func tierName(_ t: VolumeTier) -> String {
+        switch t {
+        case .scannable: return "scannable"
+        case .readOnly: return "readOnly"
+        case .protected: return "protected"
+        }
     }
 }

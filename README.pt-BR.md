@@ -48,14 +48,24 @@ harbofly scan --json         # saída pra máquina
 harbofly clean --dry-run     # prévia do que a limpeza segura mandaria pra Lixeira
 harbofly clean               # manda todos os itens 🟢 seguros pra Lixeira
 harbofly clean --stale-only  # só artifacts de projetos parados há 90+ dias
+
+harbofly volumes             # todo disco conectado, com tamanho, livre e selos
+harbofly index /Volumes/T7   # o que há nele: cobertura, espaço, por pasta/extensão/tamanho
+harbofly compare /Volumes/T7 # o que já existe em outro disco, o que repete aqui
+                             #   dentro, e o que só existe aqui
+harbofly compare /Volumes/T7 --subtrees   # pastas duplicadas por inteiro
+harbofly compare /Volumes/T7 --apply      # remove só o que foi provado existir em outro lugar
 ```
 
 O CLI só toca no tier 🟢 seguro e sempre passa pela Lixeira.
+O `compare` recusa volume só-leitura, de rede e de Time Machine, e avisa quando o
+disco não tem Lixeira (ali a remoção não tem volta).
 Instalou pelo DMG? Rode `/Applications/Harbofly.app/Contents/MacOS/Harbofly scan`.
 
 ## Features
 
 - **Auto-discovery**: varre `~/Development` procurando artifacts de build de 20+ stacks — `node_modules`, `.build`, `target` (Rust/Maven/SBT), `.gradle`, `.dart_tool`, `vendor` (Go/PHP), `bin`/`obj` (.NET), `_build` (Elixir), `.terraform`, `.godot`, `zig-out` e mais (nomes genéricos só contam com o arquivo-marcador do ecossistema ao lado, então suas pastas nunca são tocadas), mais 25+ locais de cache conhecidos — package managers (npm, pnpm, Bun, Gradle, Maven, Cargo, Go, Flutter, pip, uv, CocoaPods, Homebrew…), editores (VS Code, Cursor, JetBrains) e **ferramentas de IA** (pesos de modelo do Ollama, Hugging Face, LM Studio). Zero config de path.
+- **Todo disco que você conecta**: uma janela **Discos** redimensionável lista cada volume montado — HD externo, pen drive, cartão — com o espaço livre dele, e lê o disco para mostrar onde está o volume de dados, por pasta, por extensão e por tamanho. Depois compara um disco com os outros e separa em três: o que **já existe em outro disco** (provado byte a byte, então liberar aqui não perde nada), o que **repete dentro do próprio disco**, e o que **só existe ali** — a parte que uma migração tem de levar, não apagar. Pasta duplicada por inteiro vira uma linha só, porque em disco de backup a duplicata é a árvore, não o arquivo. E toda conta fecha: lidos + fora da conta + com erro = visitados, com o motivo de cada um, para que "não achei nada" nunca possa ser um bug calado.
 - **DerivedData por projeto**: a pasta de build de cada projeto Xcode aparece separada, resolvida pro workspace dono.
 - **Detecção de projetos parados**: projeto sem atividade há 90+ dias ganha selo — e alerta vermelho se tiver **trabalho não commitado ou não pushado** (lido do git local, 100% offline).
 - **Auto-clean (opt-in, grátis)**: deixa o Harbofly fazer a faxina sozinho — **no fim do dia**, no começo do dia, ao fechar o Xcode, toda semana ou com disco baixo. Você escolhe o escopo (caches de ferramentas → projetos parados → tudo 🟢) e o mínimo. Só itens 🟢 seguros, sempre pela Lixeira, com notificação e histórico. Depois de algumas limpezas manuais, ele oferece assumir isso num toque. A automação que outros limpadores trancam num plano **Pro** pago — aqui é de graça.

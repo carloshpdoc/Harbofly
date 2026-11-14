@@ -48,9 +48,18 @@ harbofly scan --json         # machine-readable output
 harbofly clean --dry-run     # preview what a safe clean would move to the Trash
 harbofly clean               # move every 🟢 safe item to the Trash
 harbofly clean --stale-only  # only artifacts from projects idle for 90+ days
+
+harbofly volumes             # every disk plugged in, with size, free space and flags
+harbofly index /Volumes/T7   # what's on it: coverage, space, by folder/extension/size
+harbofly compare /Volumes/T7 # what already exists on another disk, what repeats
+                             #   inside it, what only exists there
+harbofly compare /Volumes/T7 --subtrees   # folders duplicated in full
+harbofly compare /Volumes/T7 --apply      # remove only what was proven to exist elsewhere
 ```
 
 The CLI only ever touches the 🟢 safe tier and always goes through the Trash.
+`compare` refuses read-only, network and Time Machine volumes, and tells you when
+a disk has no Trash (deleting there cannot be undone).
 Installed from the DMG? Run `/Applications/Harbofly.app/Contents/MacOS/Harbofly scan`.
 
 ## Use it with your AI agent
@@ -64,6 +73,7 @@ install per agent.
 ## Features
 
 - **Auto-discovery**: scans `~/Development` for build artifacts across 20+ stacks — `node_modules`, `.build`, `target` (Rust/Maven/SBT), `.gradle`, `.dart_tool`, `vendor` (Go/PHP), `bin`/`obj` (.NET), `_build` (Elixir), `.terraform`, `.godot`, `zig-out` and more (generic names are guarded by the ecosystem's marker file, so your own folders are never touched), plus 25+ known cache locations — package managers (npm, pnpm, Bun, Gradle, Maven, Cargo, Go, Flutter, pip, uv, CocoaPods, Homebrew…), editors (VS Code, Cursor, JetBrains) and **AI tools** (Ollama, Hugging Face, LM Studio model weights). Zero path config.
+- **Every disk you plug in**: a resizable **Disks** window lists each mounted volume — external drive, USB stick, card — with its own free space, and reads it to show where the bulk is, by folder, by extension and by size. Then it compares one disk against the others and splits the result in three: what **already exists on another disk** (proven byte for byte, so freeing it here loses nothing), what **repeats inside that same disk**, and what **only exists there** — the part a migration has to carry, not delete. Folders duplicated in full collapse into a single line, because on a backup disk the duplicate is the tree, not the file. Every count closes: files read + skipped + failed = files visited, with the reason for each, so "nothing found" can never be a silent bug.
 - **Per-project DerivedData**: each Xcode project's build folder shows up on its own, resolved to the workspace that owns it.
 - **Stale project detection**: projects with no activity for 90+ days get a badge — and a red warning if they hold **uncommitted or unpushed work** (read from your local git, fully offline).
 - **Auto-clean (opt-in, free)**: let Harbofly do the chore itself — **at the end of the day**, at the start of the day, when Xcode quits, weekly, or when disk runs low. You pick the scope (tool caches → idle projects → everything 🟢) and the minimum. Only 🟢 safe items, always through the Trash, with a notification and history. After a few manual cleanups it offers to take over in one tap. The automation other cleaners lock behind a paid **Pro** plan — here it's free.
